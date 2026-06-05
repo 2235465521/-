@@ -1,0 +1,201 @@
+    def search_page_cluster(
+        self,
+        keywords: list[str],
+        page: int = 1,
+        per_page: int = 10,
+        *,
+        pdf_only: bool = True,
+        std_folder: str | None = None,
+        primary_keyword: str | None = None,
+    ) -> dict:
+        """同类产品检索：标准中文名匹配任一关键词，按命中词数排序。"""
+        kws: list[str] = []
+        seen: set[str] = set()
+        for k in keywords:
+            t = (k or "").strip()
+            if t and t not in seen:
+                seen.add(t)
+                kws.append(t)
+        if not kws:
+            return {
+                "total": 0,
+                "page": max(1, page),
+                "per_page": per_page,
+                "total_pages": 0,
+                "items": [],
+                "pdf_only": pdf_only,
+            }
+        kws = kws[:24]
+        page = max(1, page)
+        per_page = min(max(per_page, 1), 50)
+        offset = (page - 1) * per_page
+        primary = (primary_keyword or kws[0]).strip()
+
+        if self._mysql_available():
+            return self._search_page_cluster_mysql(
+                kws, primary, page, per_page, offset, pdf_only, std_folder
+            )
+        return self._search_page_cluster_sqlite(
+            kws, primary, page, per_page, offset, pdf_only, std_folder
+        )
+
+    def _cluster_score_sql(
+        self, keywords: list[str], primary: str, mysql: bool
+    ) -> tuple[str, list]:
+        ph = "%s" if mysql else "?"
+        parts: list[str] = []
+        args: list = []
+        for kw in keywords:
+            pat = f"%{kw}%"
+            weight = 2 if kw == primary else 1
+            parts.append(
+                f"(CASE WHEN b.std_chinesename LIKE {ph} THEN {weight} ELSE 0 END)"
+            )
+            args.append(pat)
+        return " + ".join(parts) or "0", args
+
+    def _cluster_name_where_sql(
+        self, keywords: list[str], mysql: bool
+    ) -> tuple[str, list]:
+        ph = "%s" if mysql else "?"
+        parts = [f"b.std_chinesename LIKE {ph}" for _ in keywords]
+        args = [f"%{kw}%" for kw in keywords]
+        return "(" + " OR ".join(parts) + ")", args
+
+    def _search_page_cluster_sqlite(
+        self,
+        keywords: list[str],
+        primary: str,
+        page: int,
+        per_page: int,
+        offset: int,
+        pdf_only: bool,
+        std_folder: str | None,
+    ) -> dict:
+        if not SQLITE_PATH.is_file():
+            return {
+                "total": 0,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": 0,
+                "items": [],
+            }
+        score_sql, score_args = self._cluster_score_sql(keywords, primary, False)
+        where_sql, where_args = self._cluster_name_where_sql(keywords, False)
+        folder_sql, folder_args = self._folder_exists_sql(std_folder)
+        with self._sqlite() as conn:
+            if pdf_only:
+                count_sql = f"""
+                    SELECT COUNT(DISTINCT b.id) AS c FROM std_base b
+                    WHERE {where_sql}
+                      AND EXISTS (
+                        SELECT 1 FROM std_filepath f WHERE f.base_id = b.id
+                      ){folder_sql}
+                """
+                search_sql = f"""
+                    SELECT DISTINCT b.*, ({score_sql}) AS match_score
+                    FROM std_base b
+                    WHERE {where_sql}
+                      AND EXISTS (
+                        SELECT 1 FROM std_filepath f WHERE f.base_id = b.id
+                      ){folder_sql}
+                    ORDER BY match_score DESC, b.std_id
+                    LIMIT ? OFFSET ?
+                """
+            else:
+                count_sql = f"""
+                    SELECT COUNT(DISTINCT b.id) AS c FROM std_base b
+                    WHERE {where_sql}{folder_sql}
+                """
+                search_sql = f"""
+                    SELECT DISTINCT b.*, ({score_sql}) AS match_score
+                    FROM std_base b
+                    WHERE {where_sql}{folder_sql}
+                    ORDER BY match_score DESC, b.std_id
+                    LIMIT ? OFFSET ?
+                """
+            count_args = where_args + folder_args
+            cur = conn.execute(count_sql, count_args)
+            total = int(cur.fetchone()[0])
+            cur = conn.execute(
+                search_sql, where_args + score_args + folder_args + [per_page, offset]
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+            items = [
+                self._row_to_lite(r, self._has_pdf_sqlite(conn, r["id"])) for r in rows
+            ]
+        total_pages = (total + per_page - 1) // per_page if total else 0
+        return {
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+            "items": items,
+            "pdf_only": pdf_only,
+        }
+
+    def _search_page_cluster_mysql(
+        self,
+        keywords: list[str],
+        primary: str,
+        page: int,
+        per_page: int,
+        offset: int,
+        pdf_only: bool,
+        std_folder: str | None,
+    ) -> dict:
+        score_sql, score_args = self._cluster_score_sql(keywords, primary, True)
+        where_sql, where_args = self._cluster_name_where_sql(keywords, True)
+        folder_sql, folder_args = self._folder_exists_sql(std_folder)
+        with self._mysql() as conn:
+            cur = conn.cursor()
+            if pdf_only:
+                count_sql = f"""
+                    SELECT COUNT(DISTINCT b.id) AS c FROM std_base b
+                    WHERE {where_sql}
+                      AND EXISTS (
+                        SELECT 1 FROM std_filepath f WHERE f.base_id = b.id
+                      ){folder_sql}
+                """
+                search_sql = f"""
+                    SELECT DISTINCT b.*, ({score_sql}) AS match_score
+                    FROM std_base b
+                    WHERE {where_sql}
+                      AND EXISTS (
+                        SELECT 1 FROM std_filepath f WHERE f.base_id = b.id
+                      ){folder_sql}
+                    ORDER BY match_score DESC, b.std_id
+                    LIMIT %s OFFSET %s
+                """
+            else:
+                count_sql = f"""
+                    SELECT COUNT(DISTINCT b.id) AS c FROM std_base b
+                    WHERE {where_sql}{folder_sql}
+                """
+                search_sql = f"""
+                    SELECT DISTINCT b.*, ({score_sql}) AS match_score
+                    FROM std_base b
+                    WHERE {where_sql}{folder_sql}
+                    ORDER BY match_score DESC, b.std_id
+                    LIMIT %s OFFSET %s
+                """
+            cur.execute(count_sql, where_args + folder_args)
+            total = int(cur.fetchone()["c"])
+            cur.execute(
+                search_sql, where_args + score_args + folder_args + [per_page, offset]
+            )
+            rows = list(cur.fetchall())
+            items = [
+                self._row_to_lite(r, self._has_pdf_mysql(cur, r["id"])) for r in rows
+            ]
+        total_pages = (total + per_page - 1) // per_page if total else 0
+        return {
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+            "items": items,
+            "pdf_only": pdf_only,
+        }
+
+    def _stats_year_sql(self, year: int | None, mysql: bool) -> tuple[str, list]:

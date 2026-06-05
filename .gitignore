@@ -1,0 +1,29 @@
+# Environments
+.env
+.env.local
+.env.*
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# SQLite Databases & Cache (built dynamically via scripts)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# PDF Files
+data/pdf_files/
+*.pdf
+
+# IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+.gitspec

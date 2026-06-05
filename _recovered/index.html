@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache" />
+  <title>标准 PDF 检索</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f0f4f8;
+      --bg2: #e2eaf2;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --accent: #0ea5e9;
+      --accent2: #0284c7;
+      --accent-soft: rgba(14, 165, 233, 0.12);
+      --success: #10b981;
+      --success-soft: rgba(16, 185, 129, 0.12);
+      --warn: #f59e0b;
+      --warn-soft: rgba(245, 158, 11, 0.12);
+      --danger: #ef4444;
+      --danger-soft: rgba(239, 68, 68, 0.1);
+      --shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+      --shadow-lg: 0 12px 40px rgba(14, 165, 233, 0.12);
+      --radius: 16px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Noto Sans SC", "DM Sans", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+    .bg-decor {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(14, 165, 233, 0.18), transparent),
+        radial-gradient(ellipse 60% 40% at 100% 0%, rgba(99, 102, 241, 0.08), transparent),
+        linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
+    }
+    .wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+    }
+    .logo-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--accent), #6366f1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.35rem;
+      box-shadow: var(--shadow-lg);
+    }
+    .logo h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .logo p {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.1rem;
+    }
+    .badge-ver {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.35rem 0.85rem;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(14, 165, 233, 0.35);
+    }
+    .hero {
+      text-align: center;
+      margin-bottom: 1.75rem;
+    }
+    .hero h2 {
+      font-size: 1.05rem;
+      font-weight: 500;
+      color: var(--muted);
+      max-width: 520px;
+      margin: 0 auto;
+    }
+    .search-panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.45rem;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 1rem;
+    }
+    .search-box {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .search-icon {
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 1.2rem;
+      flex-shrink: 0;
+    }
+    .search-box input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      font-size: 1.1rem;
+      padding: 0.75rem 0;
+      color: var(--text);
+      outline: none;
+      min-width: 0;
+    }
+    .search-box input::placeholder { color: #94a3b8; }
+    .btn-search {
+      flex-shrink: 0;
+      border: none;
+      border-radius: 12px;
+      padding: 0.75rem 1.6rem;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #fff;
+      cursor: pointer;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      box-shadow: 0 4px 14px rgba(14, 165, 233, 0.4);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .btn-search:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(14, 165, 233, 0.45);
+    }
+    .btn-search:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      justify-content: center;
+      margin-bottom: 1.5rem;
+    }
+    .chip {
+      font-size: 0.78rem;
+      padding: 0.25rem 0.7rem;
+      border-radius: 999px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .chip:hover {
+      border-color: var(--accent);
+      color: var(--accent2);
+      background: var(--accent-soft);
+    }
+    .meta-fold {
+      text-align: center;
+      margin-bottom: 1.25rem;
+    }
+    .meta-fold summary {
+      font-size: 0.8rem;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+    .meta-fold .meta-inner {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      justify-content: center;
+      margin-top: 0.5rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .meta-fold span {
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 0.2rem 0.55rem;
+      border-radius: 6px;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .alert {
+      background: var(--danger-soft);
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      color: #b91c1c;
+      padding: 1rem 1.15rem;
+      border-radius: 12px;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.35rem 1.5rem;
+      margin-bottom: 1rem;
+      box-shadow: var(--shadow);
+      border-left: 4px solid var(--accent);
+      animation: fadeUp 0.35s ease;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.5rem;
+    }
+    .card h2 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--accent2);
+      letter-spacing: -0.02em;
+    }
+    .card .title {
+      font-size: 0.95rem;
+      color: var(--text);
+      margin-bottom: 0.85rem;
+      line-height: 1.55;
+    }
+    .tags { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
+    .tag {
+      font-size: 0.75rem;
+      font-weight: 500;
+      padding: 0.2rem 0.6rem;
+      border-radius: 8px;
+      background: #f1f5f9;
+      color: var(--muted);
+    }
+    .tag.status-1 { color: #047857; background: var(--success-soft); }
+    .tag.status-0 { color: #b91c1c; background: var(--danger-soft); }
+    .tag.status-2 { color: #b45309; background: var(--warn-soft); }
+    .pdf-block {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+    }
+    .pdf-block h3 {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.75rem;
+    }
+    .file-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.65rem 0;
+    }
+    .file-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: var(--danger-soft);
+      color: #dc2626;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .file-info { flex: 1; min-width: 0; }
+    .file-name {
+      font-size: 0.88rem;
+      font-weight: 500;
+      word-break: break-all;
+      color: var(--text);
+    }
+    .file-meta { font-size: 0.78rem; color: var(--muted); margin-top: 0.15rem; }
+    .file-name.missing .file-meta { color: var(--danger); }
+    .btn-dl {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.55rem 1.1rem;
+      border-radius: 10px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      text-decoration: none;
+      color: #fff;
+      background: linear-gradient(135deg, var(--success), #059669);
+      box-shadow: 0 3px 12px rgba(16, 185, 129, 0.35);
+      transition: transform 0.15s;
+    }
+    .btn-dl:hover { transform: translateY(-1px); }
+    .btn-dl.disabled {
+      opacity: 0.4;
+      pointer-events: none;
+      background: #94a3b8;
+      box-shadow: none;
+    }
+    .empty, .loading {
+      text-align: center;
+      padding: 3rem 1.5rem;
+      background: var(--card);
+      border-radius: var(--radius);
+      border: 1px dashed var(--border);
+      color: var(--muted);
+    }
+    .loading .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      margin: 0 auto 1rem;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .footer {
+      text-align: center;
+      font-size: 0.75rem;
+      color: #94a3b8;
+      margin-top: 2rem;
+    }
+  </style>
+</head>
+<body>
+  <motion.div class="bg-decor"></div>
+  <div class="wrap">
+    <div class="top-bar">
+      <div class="logo">
+        <div class="logo-icon">📄</motion.div>
+        <div>
+          <h1>标准 PDF 检索</h1>
+          <p>输入编号 · 查找 · 下载</p>
+        </motion.div>
+      </motion.div>
+      <span class="badge-ver">v{{ app_version }}</span>
+    </motion.div>
+
+    <div class="hero">
+      <h2>支持 GB/T、JB/T、YD/T、AQ 等，自动匹配带斜杠与不带斜杠的写法</h2>
+    </motion.div>
+
+    {% if not ready %}
+    <div class="alert">
+      数据库未就绪。请运行 <code>python build_index.py</code> 或配置 MySQL。
+    </motion.div>
+    {% endif %}
+
+    <div class="search-panel">
+      <form class="search-box" id="searchForm">
+        <span class="search-icon">🔍</span>
+        <input
+          type="text"
+          id="query"
+          name="q"
+          placeholder="输入标准编号，如 GB/T 1002-2024"
+          autocomplete="off"
+          autofocus
+        />
+        <button type="submit" class="btn-search" id="btnSearch">检索</button>
+      </form>
+    </motion.div>
+
+    <div class="chips" id="quickChips">
+      <span class="chip" data-q="GB/T 1002-2024">GB/T 1002-2024</span>
+      <span class="chip" data-q="JB/T 8944-2019">JB/T 8944-2019</span>
+      <span class="chip" data-q="YD/T 1003-2015">YD/T 1003-2015</span>
+      <span class="chip" data-q="AQ 1021-2006">AQ 1021-2006</span>
+    </motion.div>
+
+    <details class="meta-fold">
+      <summary>系统信息</summary>
+      <div class="meta-inner">
+        <span>数据源：{{ backend }}</span>
+        <span title="{{ pdf_root }}">PDF：{{ pdf_root }}</span>
+      </motion.div>
+    </details>
+
+    <div id="results"></div>
+
+    <p class="footer">关闭启动窗口即停止服务 · JB/T 首次检索约需 15～90 秒</p>
+  </motion.div>
+
+  <script>
+    const EXPECT_VERSION = "{{ app_version }}";
+    const form = document.getElementById("searchForm");
+    const input = document.getElementById("query");
+    const results = document.getElementById("results");
+    const btn = document.getElementById("btnSearch");
+
+    document.querySelectorAll(".chip").forEach(el => {
+      el.addEventListener("click", () => {
+        input.value = el.dataset.q;
+        form.requestSubmit();
+      });
+    });
+
+    function fmtSize(n) {
+      if (!n) return "";
+      if (n < 1024) return n + " B";
+      if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+      return (n / 1048576).toFixed(1) + " MB";
+    }
+
+    function statusClass(ex) {
+      if (ex === 1) return "status-1";
+      if (ex === 0) return "status-0";
+      if (ex === 2) return "status-2";
+      return "";
+    }
+
+    function renderItems(items) {
+      if (!items.length) {
+        results.innerHTML = '<div class="empty">未找到匹配标准，请检查编号是否正确</div>';
+        return;
+      }
+      results.innerHTML = items.map(item => {
+        const files = (item.files || []).map(f => {
+          const href = f.source === "disk"
+            ? `/api/download-std/${item.id}/${f.disk_index}`
+            : `/api/download/${f.id}`;
+          const meta = [
+            f.file_size ? fmtSize(f.file_size) : "",
+            f.source === "disk" ? "磁盘扫描" : "",
+            !f.exists ? "未找到文件" : ""
+          ].filter(Boolean).join(" · ");
+          return `
+            <div class="file-row">
+              <div class="file-icon">PDF</div>
+              <div class="file-info ${f.exists ? "" : "missing"}">
+                <motion.div class="file-name">${escapeHtml(f.file_name)}</div>
+                <div class="file-meta">${escapeHtml(meta)}</div>
+              </motion.div>
+              <a class="btn-dl ${f.exists ? "" : "disabled"}" href="${href}">↓ 下载</a>
+            </motion.div>`;
+        }).join("");
+        return `
+          <article class="card">
+            <div class="card-header">
+              <h2>${escapeHtml(item.std_id)}</h2>
+            </motion.div>
+            <p class="title">${escapeHtml(item.std_chinesename || "（无中文名称）")}</p>
+            <div class="tags">
+              <span class="tag ${statusClass(item.ex_state)}">${escapeHtml(item.ex_state_label)}</span>
+              ${item.std_type ? `<span class="tag">${escapeHtml(item.std_type)}</span>` : ""}
+              ${item.release_date ? `<span class="tag">发布 ${item.release_date}</span>` : ""}
+              ${item.implement_date ? `<span class="tag">实施 ${item.implement_date}</span>` : ""}
+            </motion.div>
+            <div class="pdf-block">
+              <h3>PDF 文件 · ${(item.files || []).length} 个</h3>
+              ${files || '<p class="file-meta">暂无 PDF，可稍候重试或检查 Z 盘目录</p>'}
+            </motion.div>
+          </article>`;
+      }).join("");
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement("motion.div");
+      d.textContent = s || "";
+      return d.innerHTML;
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const q = input.value.trim();
+      if (!q) return;
+      btn.disabled = true;
+      results.innerHTML = '<div class="loading"><div class="spinner"></div>正在检索，JB/T 等标准会扫描磁盘，请稍候…</div>';
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        if (!data.ok) {
+          results.innerHTML = `<div class="alert">${escapeHtml(data.error || "检索失败")}</motion.div>`;
+          return;
+        }
+        if (data.server_version && data.server_version !== EXPECT_VERSION) {
+          results.innerHTML = `<div class="alert">版本不一致（当前 ${data.server_version}），请重新双击「打开标准检索」</div>`;
+          return;
+        }
+        renderItems(data.items || []);
+      } catch (err) {
+        results.innerHTML = `<motion.div class="alert">连接失败：${escapeHtml(err.message)}</motion.div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

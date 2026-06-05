@@ -1,0 +1,193 @@
+        out = sorted(years, reverse=True)
+        return out[:limit]
+
+    def list_std_types(self, limit: int = 80) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        if self._mysql_available():
+            with self._mysql() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT DISTINCT std_type FROM std_base
+                    WHERE std_type IS NOT NULL AND std_type != ''
+                    ORDER BY std_type LIMIT %s
+                    """,
+                    (limit,),
+                )
+                for row in cur.fetchall():
+                    t = (row.get("std_type") or "").strip()
+                    if t and t not in seen:
+                        seen.add(t)
+                        out.append(t)
+        elif SQLITE_PATH.is_file():
+            with self._sqlite() as conn:
+                cur = conn.execute(
+                    """
+                    SELECT DISTINCT std_type FROM std_base
+                    WHERE std_type IS NOT NULL AND std_type != ''
+                    ORDER BY std_type LIMIT ?
+                    """,
+                    (limit,),
+                )
+                for row in cur.fetchall():
+                    t = (row.get("std_type") or "").strip()
+                    if t and t not in seen:
+                        seen.add(t)
+                        out.append(t)
+        return out
+
+    def search_page_advanced(
+        self,
+        query: str,
+        page: int = 1,
+        per_page: int = 10,
+        *,
+        pdf_only: bool = True,
+        std_folder: str | None = None,
+        filters=None,
+    ) -> dict:
+        from search_filters import AdvancedFilters, build_advanced_where
+
+        q = (query or "").strip()
+        flt: AdvancedFilters = filters or AdvancedFilters()
+        if not q and not flt.active():
+            return {
+                "total": 0,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": 0,
+                "items": [],
+                "search_mode": "advanced",
+            }
+        page = max(1, page)
+        per_page = min(max(per_page, 1), 50)
+        offset = (page - 1) * per_page
+
+        if self._mysql_available():
+            return self._search_page_advanced_mysql(
+                q, page, per_page, offset, pdf_only=pdf_only,
+                std_folder=std_folder, filters=flt,
+            )
+        return self._search_page_advanced_sqlite(
+            q, page, per_page, offset, pdf_only=pdf_only,
+            std_folder=std_folder, filters=flt,
+        )
+
+    def _search_page_advanced_sqlite(
+        self,
+        q: str,
+        page: int,
+        per_page: int,
+        offset: int,
+        *,
+        pdf_only: bool,
+        std_folder: str | None,
+        filters,
+    ) -> dict:
+        from search_filters import build_advanced_where
+
+        if not SQLITE_PATH.is_file():
+            return {
+                "total": 0,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": 0,
+                "items": [],
+                "search_mode": "advanced",
+            }
+        folder_sql, folder_args = self._folder_exists_sql(std_folder)
+        where_extra, args = build_advanced_where(
+            filters, q, pdf_only=pdf_only, std_folder=std_folder,
+            folder_sql=folder_sql, folder_args=tuple(folder_args),
+        )
+        base_where = "1=1" + where_extra
+        with self._sqlite() as conn:
+            cur = conn.execute(
+                f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {base_where}",
+                args,
+            )
+            total = int(cur.fetchone()[0])
+            cur = conn.execute(
+                f"""
+                SELECT DISTINCT b.* FROM std_base b
+                WHERE {base_where}
+                ORDER BY b.std_id
+                LIMIT ? OFFSET ?
+                """,
+                (*args, per_page, offset),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+            items = [
+                self._row_to_lite(r, self._has_pdf_sqlite(conn, r["id"]))
+                for r in rows
+            ]
+        total_pages = (total + per_page - 1) // per_page if total else 0
+        return {
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+            "items": items,
+            "search_mode": "advanced",
+            "pdf_only": pdf_only,
+            "std_folder": std_folder,
+            "filters": filters.__dict__ if filters else {},
+        }
+
+    def _search_page_advanced_mysql(
+        self,
+        q: str,
+        page: int,
+        per_page: int,
+        offset: int,
+        *,
+        pdf_only: bool,
+        std_folder: str | None,
+        filters,
+    ) -> dict:
+        from search_filters import build_advanced_where
+
+        folder_sql, folder_args = self._folder_exists_sql(std_folder)
+        where_extra, args = build_advanced_where(
+            filters, q, pdf_only=pdf_only, std_folder=std_folder,
+            folder_sql=folder_sql, folder_args=tuple(folder_args),
+        )
+        base_where = "1=1" + where_extra
+        mysql_args = list(args)
+        with self._mysql() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {base_where}",
+                mysql_args,
+            )
+            total = int(cur.fetchone()["c"])
+            cur.execute(
+                f"""
+                SELECT DISTINCT b.* FROM std_base b
+                WHERE {base_where}
+                ORDER BY b.std_id
+                LIMIT %s OFFSET %s
+                """,
+                (*mysql_args, per_page, offset),
+            )
+            rows = list(cur.fetchall())
+            items = [
+                self._row_to_lite(r, self._has_pdf_mysql(cur, r["id"]))
+                for r in rows
+            ]
+        total_pages = (total + per_page - 1) // per_page if total else 0
+        return {
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+            "items": items,
+            "search_mode": "advanced",
+            "pdf_only": pdf_only,
+            "std_folder": std_folder,
+            "filters": filters.__dict__ if filters else {},
+        }
+
+
+db = Database()
