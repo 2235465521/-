@@ -511,7 +511,7 @@ class Database:
         folder_sql, folder_args = self._folder_exists_sql(std_folder)
         where = (" AND ".join(where_parts) if where_parts else "1=1") + folder_sql
         args.extend(folder_args)
-        order = "ORDER BY substr(b.release_date, 1, 4) DESC, b.std_id DESC"
+        order = "ORDER BY b.release_date DESC"
         with self._sqlite() as conn:
             cur = conn.execute(
                 f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {where}",
@@ -562,7 +562,7 @@ class Database:
             folder_sql = folder_sql.replace("?", "%s")
         where = (" AND ".join(where_parts) if where_parts else "1=1") + folder_sql
         args.extend(folder_args)
-        order = "ORDER BY substr(b.release_date, 1, 4) DESC, b.std_id DESC"
+        order = "ORDER BY b.release_date DESC"
         with self._mysql() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -666,7 +666,7 @@ class Database:
         pdf_only: bool,
         std_folder: str | None,
     ) -> dict:
-        clause, clause_args = build_keyword_match_clause(q, param="%s", use_std_id_norm=False)
+        clause, clause_args = build_keyword_match_clause(q, param="%s", use_std_id_norm=True)
         order_sql, order_args = mysql_keyword_match_order_by(q)
         where_parts = [clause]
         args: list = list(clause_args)

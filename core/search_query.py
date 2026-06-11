@@ -210,39 +210,32 @@ def _append_std_id_match(
         args.append(norm_key)
         parts.append(f"b.std_id_norm LIKE {param}")
         args.append(f"{norm_key}%")
+        if compact_key != norm_key:
+            parts.append(f"b.std_id_norm = {param}")
+            args.append(compact_key)
+            parts.append(f"b.std_id_norm LIKE {param}")
+            args.append(f"{compact_key}%")
+        return
 
     parts.append(f"{std_compact} = {param}")
     args.append(compact_key)
     parts.append(f"{std_compact} LIKE {param}")
     args.append(f"{compact_key}%")
 
-    parts.append(f"REPLACE(UPPER(b.std_id), ' ', '') = {param}")
-    args.append(norm_key)
-    parts.append(f"REPLACE(UPPER(b.std_id), ' ', '') LIKE {param}")
-    args.append(f"{norm_key}%")
-
-    parts.append(f"UPPER(b.std_id) LIKE {param}")
-    args.append(like_pat)
-    parts.append(f"UPPER(b.std_id) LIKE {param}")
-    args.append(flex_pat)
-
-    parts.append(
-        f"EXISTS (SELECT 1 FROM std_filepath f2 WHERE f2.base_id = b.id AND "
-        f"(UPPER(f2.file_name) LIKE {param} OR {file_compact} LIKE {param} OR {file_compact} LIKE {param}))"
-    )
-    args.extend([like_pat, f"%{compact_key}%", f"{compact_key}%"])
-
 
 def _append_text_match(parts: list[str], args: list[Any], kw: str, *, param: str) -> None:
     like_pat = like_pattern(kw)
     parts.append(f"b.std_chinesename LIKE {param}")
     args.append(like_pat)
-    parts.append(f"UPPER(b.std_id) LIKE {param}")
-    args.append(f"%{kw.upper()}%")
-    parts.append(
-        f"EXISTS (SELECT 1 FROM std_filepath f2 WHERE f2.base_id = b.id AND UPPER(f2.file_name) LIKE {param})"
-    )
-    args.append(f"%{kw.upper()}%")
+    
+    # 仅在关键词包含英文或数字时，才匹配标准号和文件名（避免纯中文关键字触发无谓的全文扫描与子查询）
+    if any(c.isalnum() and not '\u4e00' <= c <= '\u9fff' for c in kw):
+        parts.append(f"UPPER(b.std_id) LIKE {param}")
+        args.append(f"%{kw.upper()}%")
+        parts.append(
+            f"EXISTS (SELECT 1 FROM std_filepath f2 WHERE f2.base_id = b.id AND UPPER(f2.file_name) LIKE {param})"
+        )
+        args.append(f"%{kw.upper()}%")
 
 
 def build_keyword_match_clause(

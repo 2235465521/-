@@ -155,7 +155,7 @@ def build_advanced_where(
         clause, q_args = build_keyword_match_clause(
             q,
             param=param,
-            use_std_id_norm=(param == "?"),
+            use_std_id_norm=True,
         )
         clauses.append(clause)
         args.extend(q_args)
