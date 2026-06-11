@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache" />
+  <title>标准PDF下载</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/main.css?v=5.1.1" />
+</head>
+<body>
+  <div class="app-shell" id="appLayout">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="logo-icon emis-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="9" y1="13" x2="15" y2="13"/>
+            <line x1="9" y1="17" x2="13" y2="17"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-title emis-brand">标准PDF下载</div>
+          <div class="brand-sub">编号 / 名称 / 高级筛选</div>
+        </div>
+      </div>
+      <nav class="sidebar-nav" aria-label="功能模块">
+        <div class="nav-group active-mode" data-mode="search">
+          <button type="button" class="sidebar-mode" data-mode-switch="search" title="标准检索">
+            <span class="mode-icon" aria-hidden="true">🔍</span>
+            <span class="mode-text">
+              <span class="mode-name">标准检索</span>
+              <span class="mode-desc">编号 / 名称 / 高级筛选</span>
+            </span>
+          </button>
+        </div>
+        <div class="nav-group" data-mode="product">
+          <button type="button" class="sidebar-mode" data-mode-switch="product" title="同类产品">
+            <span class="mode-icon" aria-hidden="true">📦</span>
+            <span class="mode-text">
+              <span class="mode-name">同类产品</span>
+              <span class="mode-desc">产品名扩展同类标准</span>
+            </span>
+            <span class="mode-chevron" aria-hidden="true">▼</span>
+          </button>
+          <div class="nav-subpanel">
+            <div class="subpanel-inner">
+              <div class="subpanel-title">产品组（点击试搜）</div>
+              <ul class="category-list" id="productClusterList"></ul>
+            </div>
+          </div>
+        </div>
+        <div class="nav-group" data-mode="tuangbiao">
+          <button type="button" class="sidebar-mode" data-mode-switch="tuangbiao" title="团标、征求意见稿">
+            <span class="mode-icon" aria-hidden="true">📋</span>
+            <span class="mode-text">
+              <span class="mode-name">团标、征求意见稿</span>
+              <span class="mode-desc">按名称检索 PDF</span>
+            </span>
+          </button>
+        </div>
+        <div class="nav-group" data-mode="batch">
+          <button type="button" class="sidebar-mode" data-mode-switch="batch" title="批量下载">
+            <span class="mode-icon" aria-hidden="true">☁</span>
+            <span class="mode-text">
+              <span class="mode-name">批量下载</span>
+              <span class="mode-desc">Excel 清单打包 ZIP</span>
+            </span>
+          </button>
+        </div>
+      </nav>
+      <div class="sidebar-toggle-wrap">
+        <button type="button" class="sidebar-collapse-btn" id="btnSidebarCollapse" aria-label="收起侧栏" title="收起侧栏">
+          <span class="sidebar-collapse-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 18l-6-6 6-6"/>
+            </svg>
+          </span>
+          <span class="sidebar-collapse-label">收起侧栏</span>
+        </button>
+      </div>
+      <div class="sidebar-foot">
+        <div class="server-status">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="serverStatusText">服务检测中…</span>
+        </div>
+        <span class="sidebar-version">关闭启动窗口即停止服务</span>
+      </div>
+    </aside>
+
+    <div class="app-body">
+      <header class="app-header">
+        <span class="header-badge">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          标准PDF下载
+        </span>
+        <div class="header-meta">
+          <span class="header-db" id="headerDbStatus">加载中…</span>
+        </div>
+      </header>
+
+      <main class="main-area mode-search" id="mainArea">
+        <div class="page-head" id="pageHead">
+          <h2 class="page-title" id="pageTitle">标准PDF下载</h2>
+          <p class="page-subtitle" id="pageSubtitle">支持标准编号、名称检索与多维度高级筛选，一键下载 PDF。</p>
+        </div>
+
+        <div class="search-panel" id="searchPanel">
+          <form class="search-box" id="searchForm">
+            <span class="search-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </span>
+            <input
+              type="text"
+              id="query"
+              name="q"
+              placeholder="输入标准编号或名称，回车检索"
+              autocomplete="off"
+            />
+            <button type="button" class="btn-search-clear" id="btnSearchClear" hidden title="清空" aria-label="清空">×</button>
+            <button type="submit" class="btn-search" id="btnSearch">检索</button>
+          </form>
+          <p class="search-hint" id="searchHint">支持模糊检索 · 展开「高级筛选」可按地区、起草单位等条件组合</p>
+        </div>
+
+        <div class="history-wrap empty" id="historyWrap">
+          <div class="history-label">最近检索</div>
+          <div class="chips" id="historyChips"></div>
+        </div>
+
+        <div class="search-tools" id="searchTools">
+          <button type="button" class="btn-advanced-toggle" id="btnAdvancedToggle" aria-expanded="false">
+            <svg class="adv-toggle-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h6"/></svg>
+            <span class="adv-toggle-label">高级筛选</span>
+            <span class="adv-filter-badge" id="advFilterBadge" hidden>0</span>
+          </button>
+          <div class="bulk-bar">
+            <label class="bulk-select-all"><input type="checkbox" id="chkSelectPage" /> 本页全选</label>
+            <label class="bulk-scan"><input type="checkbox" id="advScanDisk" checked /> 扫描磁盘</label>
+            <button type="button" class="btn-bulk-download" id="btnBulkDownload" disabled>
+              打包下载 (<span id="bulkCount">0</span>)
+            </button>
+          </div>
+        </div>
+
+        <div class="advanced-panel" id="advancedPanel" hidden>
+          <div class="advanced-panel-head">
+            <h3>高级筛选</h3>
+          </div>
+          <div class="advanced-grid">
+            <label class="adv-field">
+              <span>状态</span>
+              <select id="advExState"></select>
+            </label>
+            <label class="adv-field">
+              <span>标准类型</span>
+              <select id="advStdType"></select>
+            </label>
+            <label class="adv-field">
+              <span>省</span>
+              <select id="advProvince"></select>
+            </label>
+            <label class="adv-field">
+              <span>市</span>
+              <select id="advCity"></select>
+            </label>
+            <label class="adv-field">
+              <span>县/区</span>
+              <select id="advCounty"></select>
+            </label>
+            <label class="adv-field adv-field-wide">
+              <span>产品/品种</span>
+              <div class="adv-combo">
+                <input type="text" id="advProduct" placeholder="输入或选择，如：牙膏、铅笔、煤矿" autocomplete="off" spellcheck="false" />
+                <div class="adv-combo-panel" id="advProductPanel" hidden role="listbox"></div>
+              </div>
+            </label>
+            <label class="adv-field adv-field-wide">
+              <span>公司/起草单位</span>
+              <div class="adv-combo">
+                <input type="text" id="advCompany" placeholder="输入单位名称关键词" autocomplete="off" spellcheck="false" />
+                <div class="adv-combo-panel" id="advCompanyPanel" hidden role="listbox"></div>
+              </div>
+            </label>
+            <label class="adv-field">
+              <span>起草顺位</span>
+              <select id="advUnitRank">
+                <option value="">不限（任一顺位）</option>
+                <option value="1">第 1 起草单位</option>
+                <option value="2">第 2 起草单位</option>
+                <option value="3">第 3 起草单位</option>
+                <option value="gt3">大于三（第 4 位及以后）</option>
+              </select>
+            </label>
+            <label class="adv-field">
+              <span>年份起</span>
+              <select id="advYearFrom"></select>
+            </label>
+            <label class="adv-field">
+              <span>年份止</span>
+              <select id="advYearTo"></select>
+            </label>
+            <div class="adv-field adv-year-presets">
+              <span>年份快捷</span>
+              <div class="year-preset-btns">
+                <button type="button" class="year-preset" data-years="3">近3年</button>
+                <button type="button" class="year-preset" data-years="5">近5年</button>
+                <button type="button" class="year-preset" data-years="10">近10年</button>
+              </div>
+            </div>
+          </div>
+          <div class="adv-filter-history" id="advFilterHistory" hidden>
+            <span class="adv-history-label">筛选记录（点击复用）</span>
+            <div class="adv-history-chips" id="advHistoryChips"></div>
+          </div>
+          <div class="advanced-actions">
+            <button type="button" class="btn-secondary" id="btnAdvancedReset">重置条件</button>
+            <button type="button" class="btn-geo-download" id="btnGeoDownload" disabled title="需先选择省份">地区批量下载</button>
+            <button type="button" class="btn-search" id="btnAdvancedApply">应用筛选</button>
+          </div>
+        </div>
+
+        <div id="productBanner" class="resolve-banner" hidden></div>
+        <div id="results"></div>
+
+        <div class="batch-stage" id="batchStage" hidden>
+          <div class="batch-panel" id="batchToolbar">
+            <header class="batch-hero">
+              <div class="batch-hero-text">
+                <p class="batch-eyebrow">批量处理</p>
+                <h2 class="batch-title">标准 PDF 批量下载</h2>
+                <p class="batch-subtitle">Excel 填标准号 → 自动匹配库内与 E 盘 → 一键打包 ZIP</p>
+              </div>
+              <ol class="batch-steps" id="batchSteps" aria-label="操作步骤">
+                <li class="is-active" data-step="1"><span>1</span>下载模板</li>
+                <li data-step="2"><span>2</span>上传解析</li>
+                <li data-step="3"><span>3</span>预览下载</li>
+              </ol>
+            </header>
+
+            <div class="batch-grid batch-grid-2">
+              <section class="batch-card batch-card-template">
+                <div class="batch-card-head">
+                  <div class="batch-card-icon batch-icon-template" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>
+                  </div>
+                  <div>
+                    <h3 class="batch-card-title">Excel 输入模板</h3>
+                    <p class="batch-card-desc">三列即可，备注列留空由系统自动填写</p>
+                  </div>
+                </div>
+                <div class="batch-template-preview" aria-hidden="true">
+                  <div class="preview-sheet">
+                    <div class="preview-row preview-head"><span>标准号</span><span>标准名</span><span>备注</span></div>
+                    <div class="preview-row"><span>GB/T 1002-2024</span><span>插座</span><span class="preview-auto">自动</span></div>
+                    <div class="preview-row"><span>GB 4785-2019</span><span>汽车灯</span><span class="preview-auto">自动</span></div>
+                  </div>
+                </div>
+                <ul class="batch-card-list">
+                  <li><strong>标准号</strong> — 必填，用于库内检索与 E 盘匹配</li>
+                  <li><strong>标准名</strong> — 选填，便于核对</li>
+                  <li><strong>备注</strong> — 未找到 PDF 时自动填「否」</li>
+                </ul>
+                <button type="button" class="btn-template" id="btnBatchTemplate">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0l4-4m-4 4l-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                  下载 Excel 模板
+                </button>
+              </section>
+
+              <section class="batch-card batch-card-upload">
+                <div class="batch-card-head">
+                  <div class="batch-card-icon batch-icon-upload" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  </div>
+                  <div>
+                    <h3 class="batch-card-title">上传已填写的表格</h3>
+                    <p class="batch-card-desc">支持 .xlsx、.xlsm、.csv，单次最多 400 条</p>
+                  </div>
+                </div>
+                <label class="batch-dropzone" id="batchDropzone">
+                  <input type="file" id="batchFile" accept=".xlsx,.xlsm,.csv" hidden />
+                  <span class="batch-dropzone-ring">
+                    <span class="batch-dropzone-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    </span>
+                  </span>
+                  <span class="batch-dropzone-text">点击选择或拖入文件</span>
+                  <span class="batch-dropzone-hint">Excel / CSV</span>
+                  <span class="batch-dropzone-name" id="batchFileName">未选择文件</span>
+                </label>
+                <label class="batch-scan-option">
+                  <input type="checkbox" id="batchScanDisk" checked />
+                  <span>扫描磁盘（E 盘标准库，库内无记录时继续查找）</span>
+                </label>
+                <div class="batch-actions">
+                  <button type="button" class="btn-batch btn-batch-primary" id="btnBatchParse">解析文件</button>
+                  <button type="button" class="btn-batch btn-batch-secondary" id="btnBatchPreview" disabled>预览匹配</button>
+                  <button type="button" class="btn-batch btn-batch-accent" id="btnBatchDownload" disabled>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0l4-4m-4 4l-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                    下载 ZIP
+                  </button>
+                </div>
+                <p class="batch-meta" id="batchMeta">后端模式 · 自动读 E 盘 · 单次最多 400 条</p>
+              </section>
+            </div>
+
+            <div class="batch-table-section" id="batchTableSection" hidden>
+              <div class="batch-table-head">
+                <h3 class="batch-table-heading">匹配预览</h3>
+                <button type="button" class="btn-batch btn-batch-ghost" id="btnBatchBack">← 返回上传</button>
+              </div>
+              <div class="batch-table-wrap" id="batchTableWrap"></div>
+            </div>
+            <div class="batch-feedback" id="batchFeedback" hidden></div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="js/app.js?v=5.1.4"></script>
+  <script src="js/advanced.js?v=5.0.0"></script>
+  <script src="js/batch.js?v=4.0.0"></script>
+</body>
+</html>
