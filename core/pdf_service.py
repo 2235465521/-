@@ -13,6 +13,7 @@ def find_pdf_on_disk(
     file_name: str,
     *,
     std_id: str | None = None,
+    scan_disk: bool = True,
 ) -> Path | None:
     rel = (rel_path or "").replace("\\", "/").lstrip("/")
     if rel:
@@ -29,12 +30,13 @@ def find_pdf_on_disk(
             if direct.is_file():
                 return direct
         
-        # 2. 如果直接路径找不到，在缓存的磁盘 PDF 列表中快速查找（代替极慢的 root.rglob 遍历）
-        found = find_pdf_by_filename_on_disk(name)
-        if found:
-            return found
+        # 2. 如果直接路径找不到，且允许扫盘，在缓存的磁盘 PDF 列表中快速查找
+        if scan_disk:
+            found = find_pdf_by_filename_on_disk(name)
+            if found:
+                return found
 
-    if std_id:
+    if std_id and scan_disk:
         hits = discover_pdfs_on_disk(std_id, limit=5)
         if hits:
             return hits[0]
@@ -69,7 +71,7 @@ def collect_files_for_standard(std: StandardInfo, *, scan_disk: bool = True) -> 
     for f in std.files or []:
         rel = f.get("file_path") or ""
         name = f.get("file_name") or ""
-        found = find_pdf_on_disk(rel, name, std_id=std.std_id)
+        found = find_pdf_on_disk(rel, name, std_id=std.std_id, scan_disk=scan_disk)
         entry = {
             **f,
             "exists": found is not None,
@@ -100,7 +102,7 @@ def collect_files_for_standard(std: StandardInfo, *, scan_disk: bool = True) -> 
     return files
 
 
-def pick_pdf_path(std: StandardInfo, files: list[dict]) -> Path | None:
+def pick_pdf_path(std: StandardInfo, files: list[dict], *, scan_disk: bool = True) -> Path | None:
     for f in files:
         if not f.get("exists"):
             continue
@@ -111,6 +113,7 @@ def pick_pdf_path(std: StandardInfo, files: list[dict]) -> Path | None:
             f.get("file_path") or "",
             f.get("file_name") or "",
             std_id=std.std_id,
+            scan_disk=scan_disk,
         )
         if found:
             return found

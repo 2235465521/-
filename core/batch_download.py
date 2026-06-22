@@ -258,7 +258,7 @@ def resolve_item(query: str, *, scan_disk: bool = True) -> dict[str, Any]:
         return {"status": "not_found", "query": q, "message": "未找到匹配标准"}
 
     files = collect_files_for_standard(std, scan_disk=scan_disk)
-    pdf_path = pick_pdf_path(std, files)
+    pdf_path = pick_pdf_path(std, files, scan_disk=scan_disk)
     if not pdf_path and scan_disk:
         disk = discover_pdfs_on_disk(std.std_id, limit=1)
         if disk:

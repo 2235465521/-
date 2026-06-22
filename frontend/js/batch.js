@@ -204,7 +204,7 @@
       return;
     }
     setBusy(true);
-    setFeedback('<div class="loading"><div class="spinner"></div>正在检索 E 盘 PDF 并打包，请稍候…</div>');
+    setFeedback('<div class="loading"><div class="spinner"></div>正在匹配标准并打包 ZIP，请稍候…</div>');
     try {
       const scan = batchScanDisk?.checked !== false;
       const fd = new FormData();

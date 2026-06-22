@@ -526,7 +526,7 @@ def api_batch_preview():
 
 @app.route("/api/batch/download", methods=["POST"])
 def api_batch_download():
-    scan_disk = request.args.get("scan_disk", "1") != "0"
+    scan_disk = request.args.get("scan_disk", "0") != "0"
     items: list[dict] = []
     original_data: bytes | None = None
     original_filename: str | None = None
