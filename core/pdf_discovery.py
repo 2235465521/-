@@ -34,7 +34,7 @@ def _bg_scan() -> None:
                     try:
                         if not hit.is_file():
                             continue
-                        key = str(hit.resolve()).lower()
+                        key = str(hit).lower()
                         if key not in seen_paths:
                             seen_paths.add(key)
                             found_files.append(hit)
@@ -101,7 +101,7 @@ def discover_pdfs_on_disk(std_id: str, limit: int = 20) -> list[Path]:
         for hit in all_pdfs:
             if fnmatch.fnmatch(hit.name.lower(), pattern_lower):
                 if filename_contains_std_id(hit.name, std_id):
-                    key = str(hit.resolve()).lower()
+                    key = str(hit).lower()
                     if key not in seen:
                         seen.add(key)
                         found.append(hit)
@@ -122,7 +122,10 @@ def find_pdf_by_filename_on_disk(name: str) -> Path | None:
 
 def pdf_display_path(path: Path) -> str:
     try:
-        return str(path.resolve().relative_to(PDF_ROOT.resolve()))
+        return str(path.absolute().relative_to(PDF_ROOT.absolute()))
     except ValueError:
-        return path.name
+        try:
+            return str(path.resolve().relative_to(PDF_ROOT.resolve()))
+        except Exception:
+            return path.name
 

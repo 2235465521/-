@@ -167,7 +167,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: parsedItems,
-          scan_disk: batchScanDisk?.checked !== false,
+          scan_disk: batchScanDisk?.checked === true,
         }),
       });
       const data = await res.json();
@@ -206,7 +206,7 @@
     setBusy(true);
     setFeedback('<div class="loading"><div class="spinner"></div>正在匹配标准并打包 ZIP，请稍候…</div>');
     try {
-      const scan = batchScanDisk?.checked !== false;
+      const scan = batchScanDisk?.checked === true;
       const fd = new FormData();
       fd.append("file", file);
       fd.append("items", JSON.stringify(parsedItems));

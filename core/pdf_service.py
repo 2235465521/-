@@ -17,9 +17,12 @@ def find_pdf_on_disk(
 ) -> Path | None:
     rel = (rel_path or "").replace("\\", "/").lstrip("/")
     if rel:
-        candidate = (PDF_ROOT / rel).resolve()
-        if candidate.is_file():
-            return candidate
+        candidate = PDF_ROOT / rel
+        try:
+            if candidate.is_file():
+                return candidate
+        except Exception:
+            pass
     name = (file_name or "").strip()
     if name:
         # 1. 尝试直接路径匹配（直接寻找，不遍历，最快）
