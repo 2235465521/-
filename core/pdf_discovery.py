@@ -14,13 +14,14 @@ from core.std_normalize import filename_contains_std_id, std_id_glob_patterns
 _DISK_PDF_CACHE_LOCK = threading.Lock()
 _DISK_PDF_CACHE_TIME = 0.0
 _DISK_PDF_CACHE: list[Path] = []
+_DISK_PDF_PATHS_SET: set[str] = set()
 _DISK_PDF_SCANNING = False  # Track if a background scan is running
 CACHE_TTL = 1800.0  # Cache for 30 minutes to avoid frequent disk array traversal
 
 
 def _bg_scan() -> None:
     """Background thread worker to perform the actual rglob scanning without blocking requests."""
-    global _DISK_PDF_CACHE, _DISK_PDF_CACHE_TIME, _DISK_PDF_SCANNING
+    global _DISK_PDF_CACHE, _DISK_PDF_CACHE_TIME, _DISK_PDF_SCANNING, _DISK_PDF_PATHS_SET
     try:
         found_files: list[Path] = []
         seen_paths: set[str] = set()
@@ -44,6 +45,7 @@ def _bg_scan() -> None:
                         if now - last_update_time > 1.5:
                             with _DISK_PDF_CACHE_LOCK:
                                 _DISK_PDF_CACHE = list(found_files)
+                                _DISK_PDF_PATHS_SET = set(seen_paths)
                                 _DISK_PDF_CACHE_TIME = now
                             last_update_time = now
                     except Exception:
@@ -53,10 +55,29 @@ def _bg_scan() -> None:
 
         with _DISK_PDF_CACHE_LOCK:
             _DISK_PDF_CACHE = found_files
+            _DISK_PDF_PATHS_SET = set(seen_paths)
             _DISK_PDF_CACHE_TIME = time.time()
     finally:
         with _DISK_PDF_CACHE_LOCK:
             _DISK_PDF_SCANNING = False
+
+
+def check_file_exists_in_cache(path: Path) -> bool:
+    """Check if a file exists using the in-memory cache if populated; otherwise fallback to is_file()"""
+    global _DISK_PDF_CACHE, _DISK_PDF_PATHS_SET
+    key = str(path).lower()
+    
+    # Check if the cache is populated
+    with _DISK_PDF_CACHE_LOCK:
+        has_cache = bool(_DISK_PDF_CACHE)
+        if has_cache:
+            return key in _DISK_PDF_PATHS_SET
+            
+    # Fallback to direct disk check
+    try:
+        return path.is_file()
+    except Exception:
+        return False
 
 
 def start_background_scan() -> None:

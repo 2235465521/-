@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.db import db
-from core.pdf_discovery import discover_pdfs_on_disk
+from core.pdf_discovery import discover_pdfs_on_disk, check_file_exists_in_cache
 from core.pdf_service import collect_files_for_standard, pick_pdf_path
 from core.std_normalize import normalize_std_id
 
@@ -473,7 +473,7 @@ def build_zip_archive(
             if resolved.get("status") != "ok":
                 continue
             pdf_path = Path(resolved["pdf_path"])
-            if not pdf_path.is_file():
+            if not check_file_exists_in_cache(pdf_path):
                 resolved["status"] = "no_pdf"
                 resolved["message"] = "PDF 文件不存在"
                 continue

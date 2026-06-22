@@ -27,7 +27,7 @@ from core.catalog_download import build_zip_from_catalog_ids  # noqa: E402
 from core.geo_download import count_geo_matches, geo_download_status  # noqa: E402
 from core.area_lookup import suggest_companies  # noqa: E402
 from core.db import StandardInfo, db  # noqa: E402
-from core.pdf_discovery import discover_pdfs_on_disk  # noqa: E402
+from core.pdf_discovery import discover_pdfs_on_disk, start_background_scan  # noqa: E402
 from core.pdf_service import collect_files_for_standard, find_pdf_on_disk  # noqa: E402
 from core.product_clusters import list_clusters_brief  # noqa: E402
 from core.product_search import product_search  # noqa: E402
@@ -38,6 +38,12 @@ from core.tuangbiao_catalog import tuangbiao  # noqa: E402
 from core.zhidu_catalog import zhidu  # noqa: E402
 
 app = Flask(__name__, static_folder=None)
+
+# Pre-populate disk PDF cache asynchronously on startup
+try:
+    start_background_scan()
+except Exception:
+    pass
 
 
 def _api_error(message: str, status: int = 500):

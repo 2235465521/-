@@ -5,7 +5,12 @@ from pathlib import Path
 
 from paths import PDF_ROOT, PDF_SEARCH_ROOT
 from core.db import StandardInfo
-from core.pdf_discovery import discover_pdfs_on_disk, pdf_display_path, find_pdf_by_filename_on_disk
+from core.pdf_discovery import (
+    discover_pdfs_on_disk,
+    pdf_display_path,
+    find_pdf_by_filename_on_disk,
+    check_file_exists_in_cache,
+)
 
 
 def find_pdf_on_disk(
@@ -19,7 +24,7 @@ def find_pdf_on_disk(
     if rel:
         candidate = PDF_ROOT / rel
         try:
-            if candidate.is_file():
+            if check_file_exists_in_cache(candidate):
                 return candidate
         except Exception:
             pass
@@ -30,8 +35,11 @@ def find_pdf_on_disk(
             if not root.is_dir():
                 continue
             direct = root / name
-            if direct.is_file():
-                return direct
+            try:
+                if check_file_exists_in_cache(direct):
+                    return direct
+            except Exception:
+                pass
         
         # 2. 如果直接路径找不到，且允许扫盘，在缓存的磁盘 PDF 列表中快速查找
         if scan_disk:
@@ -110,7 +118,7 @@ def pick_pdf_path(std: StandardInfo, files: list[dict], *, scan_disk: bool = Tru
         if not f.get("exists"):
             continue
         resolved = f.get("resolved_path")
-        if resolved and Path(resolved).is_file():
+        if resolved and check_file_exists_in_cache(Path(resolved)):
             return Path(resolved)
         found = find_pdf_on_disk(
             f.get("file_path") or "",
