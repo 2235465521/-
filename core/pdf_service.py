@@ -5,7 +5,7 @@ from pathlib import Path
 
 from paths import PDF_ROOT, PDF_SEARCH_ROOT
 from core.db import StandardInfo
-from core.pdf_discovery import discover_pdfs_on_disk, pdf_display_path
+from core.pdf_discovery import discover_pdfs_on_disk, pdf_display_path, find_pdf_by_filename_on_disk
 
 
 def find_pdf_on_disk(
@@ -21,18 +21,19 @@ def find_pdf_on_disk(
             return candidate
     name = (file_name or "").strip()
     if name:
+        # 1. 尝试直接路径匹配（直接寻找，不遍历，最快）
         for root in (PDF_ROOT, PDF_SEARCH_ROOT):
             if not root.is_dir():
                 continue
             direct = root / name
             if direct.is_file():
                 return direct
-            try:
-                for hit in root.rglob(name):
-                    if hit.is_file():
-                        return hit
-            except OSError:
-                continue
+        
+        # 2. 如果直接路径找不到，在缓存的磁盘 PDF 列表中快速查找（代替极慢的 root.rglob 遍历）
+        found = find_pdf_by_filename_on_disk(name)
+        if found:
+            return found
+
     if std_id:
         hits = discover_pdfs_on_disk(std_id, limit=5)
         if hits:
