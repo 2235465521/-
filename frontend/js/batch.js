@@ -241,7 +241,7 @@
       a.click();
       URL.revokeObjectURL(url);
       setFeedback(
-        '<div class="batch-hint">ZIP 已开始下载。内含 PDF、带「否」备注的 Excel 及下载清单。</div>'
+        '<div class="batch-hint">ZIP 已开始下载。内含 PDF、带「否」备注的 Excel 及下载清单。<br/>⚠️ <strong>重要提示：</strong>若下载被浏览器拦截，请在浏览器右上角下载列表或地址栏右侧选择<strong>「保留」</strong>或<strong>「允许下载」</strong>。</div>'
       );
       setStep(3);
     } catch (e) {

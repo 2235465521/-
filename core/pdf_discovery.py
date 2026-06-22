@@ -14,19 +14,17 @@ from core.std_normalize import filename_contains_std_id, std_id_glob_patterns
 _DISK_PDF_CACHE_LOCK = threading.Lock()
 _DISK_PDF_CACHE_TIME = 0.0
 _DISK_PDF_CACHE: list[Path] = []
-CACHE_TTL = 60.0  # Cache for 60 seconds (enough to speed up a batch preview/download request)
+_DISK_PDF_SCANNING = False  # Track if a background scan is running
+CACHE_TTL = 1800.0  # Cache for 30 minutes to avoid frequent disk array traversal
 
 
-def _get_disk_pdf_list() -> list[Path]:
-    """获取所有磁盘 PDF 文件的列表（带 60 秒缓存）"""
-    global _DISK_PDF_CACHE, _DISK_PDF_CACHE_TIME
-    now = time.time()
-    with _DISK_PDF_CACHE_LOCK:
-        if _DISK_PDF_CACHE and (now - _DISK_PDF_CACHE_TIME < CACHE_TTL):
-            return _DISK_PDF_CACHE
-
+def _bg_scan() -> None:
+    """Background thread worker to perform the actual rglob scanning without blocking requests."""
+    global _DISK_PDF_CACHE, _DISK_PDF_CACHE_TIME, _DISK_PDF_SCANNING
+    try:
         found_files: list[Path] = []
         seen_paths: set[str] = set()
+        last_update_time = time.time()
 
         for root in (PDF_ROOT, PDF_SEARCH_ROOT):
             if not root.is_dir():
@@ -40,13 +38,56 @@ def _get_disk_pdf_list() -> list[Path]:
                         if key not in seen_paths:
                             seen_paths.add(key)
                             found_files.append(hit)
+                        
+                        # Incrementally update the cache so the first request doesn't have to wait for the entire scan
+                        now = time.time()
+                        if now - last_update_time > 1.5:
+                            with _DISK_PDF_CACHE_LOCK:
+                                _DISK_PDF_CACHE = list(found_files)
+                                _DISK_PDF_CACHE_TIME = now
+                            last_update_time = now
                     except Exception:
                         continue
             except Exception:
                 continue
 
-        _DISK_PDF_CACHE = found_files
-        _DISK_PDF_CACHE_TIME = now
+        with _DISK_PDF_CACHE_LOCK:
+            _DISK_PDF_CACHE = found_files
+            _DISK_PDF_CACHE_TIME = time.time()
+    finally:
+        with _DISK_PDF_CACHE_LOCK:
+            _DISK_PDF_SCANNING = False
+
+
+def start_background_scan() -> None:
+    """Start background scan if not already running."""
+    global _DISK_PDF_SCANNING
+    with _DISK_PDF_CACHE_LOCK:
+        if _DISK_PDF_SCANNING:
+            return
+        _DISK_PDF_SCANNING = True
+    t = threading.Thread(target=_bg_scan, name="pdf-disk-scan", daemon=True)
+    t.start()
+
+
+def _get_disk_pdf_list() -> list[Path]:
+    """获取所有磁盘 PDF 文件的列表（带后台扫描与 30 分钟缓存，避免阻塞 web 请求）"""
+    global _DISK_PDF_CACHE, _DISK_PDF_CACHE_TIME
+    now = time.time()
+    
+    cache_empty = not _DISK_PDF_CACHE
+    cache_expired = (now - _DISK_PDF_CACHE_TIME >= CACHE_TTL)
+
+    if cache_empty or cache_expired:
+        start_background_scan()
+
+    # If the cache is completely empty, wait up to 8 seconds for the background thread to find initial files (checks _DISK_PDF_SCANNING to exit early)
+    if cache_empty:
+        start_wait = time.time()
+        while _DISK_PDF_SCANNING and not _DISK_PDF_CACHE and (time.time() - start_wait < 8.0):
+            time.sleep(0.1)
+
+    with _DISK_PDF_CACHE_LOCK:
         return _DISK_PDF_CACHE
 
 
