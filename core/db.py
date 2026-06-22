@@ -157,10 +157,6 @@ class Database:
     ) -> list[StandardInfo]:
         results: list[StandardInfo] = []
         seen: set[int] = set()
-        std_compact = (
-            "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(UPPER(std_id),' ',''),'/',''),"
-            "'-',''),'—',''),'－','')"
-        )
         with self._mysql() as conn:
             cur = conn.cursor()
             from core.std_normalize import std_id_lookup_variants
@@ -168,25 +164,22 @@ class Database:
             attempts: list[tuple[str, tuple]] = []
             for variant in std_id_lookup_variants(q):
                 attempts.append(
-                    ("SELECT * FROM std_base WHERE std_id = %s LIMIT %s", (variant, limit))
-                )
-                attempts.append(
                     (
-                        "SELECT * FROM std_base WHERE REPLACE(UPPER(std_id),' ','') = %s LIMIT %s",
-                        (std_id_norm_key(variant), limit),
+                        "SELECT * FROM std_base WHERE std_id = %s OR std_id_norm = %s LIMIT %s",
+                        (variant, std_id_norm_key(variant), limit),
                     )
-                )
-                attempts.append(
-                    (f"SELECT * FROM std_base WHERE {std_compact} = %s LIMIT %s", (std_id_compact_key(variant), limit))
                 )
             attempts.extend(
                 [
                     ("SELECT * FROM std_base WHERE std_id = %s LIMIT %s", (q, limit)),
                     (
-                        "SELECT * FROM std_base WHERE REPLACE(UPPER(std_id),' ','') = %s LIMIT %s",
+                        "SELECT * FROM std_base WHERE std_id_norm = %s LIMIT %s",
                         (norm, limit),
                     ),
-                    (f"SELECT * FROM std_base WHERE {std_compact} = %s LIMIT %s", (compact, limit)),
+                    (
+                        "SELECT * FROM std_base WHERE std_id_norm = %s LIMIT %s",
+                        (compact, limit),
+                    ),
                     (
                         "SELECT * FROM std_base WHERE UPPER(std_id) LIKE %s LIMIT %s",
                         (f"%{q.strip().upper()}%", limit),
@@ -304,37 +297,33 @@ class Database:
         from core.std_normalize import std_id_lookup_variants
 
         if self._mysql_available():
-            std_compact = (
-                "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(UPPER(std_id),' ',''),'/',''),"
-                "'-',''),'—',''),'－','')"
-            )
             with self._mysql() as conn:
                 cur = conn.cursor()
                 for variant in std_id_lookup_variants(q):
                     cur.execute(
-                        "SELECT * FROM std_base WHERE std_id = %s LIMIT 1",
-                        (variant,),
+                        "SELECT * FROM std_base WHERE std_id = %s OR std_id_norm = %s LIMIT 1",
+                        (variant, std_id_norm_key(variant)),
                     )
                     row = cur.fetchone()
                     if row:
                         files = self._fetch_files_mysql(cur, row["id"])
                         return _row_to_standard(row, files)
-                    cur.execute(
-                        "SELECT * FROM std_base WHERE REPLACE(UPPER(std_id),' ','') = %s LIMIT 1",
-                        (std_id_norm_key(variant),),
-                    )
-                    row = cur.fetchone()
-                    if row:
-                        files = self._fetch_files_mysql(cur, row["id"])
-                        return _row_to_standard(row, files)
-                    cur.execute(
-                        f"SELECT * FROM std_base WHERE {std_compact} = %s LIMIT 1",
-                        (std_id_compact_key(variant),),
-                    )
-                    row = cur.fetchone()
-                    if row:
-                        files = self._fetch_files_mysql(cur, row["id"])
-                        return _row_to_standard(row, files)
+                cur.execute(
+                    "SELECT * FROM std_base WHERE std_id_norm = %s LIMIT 1",
+                    (norm,),
+                )
+                row = cur.fetchone()
+                if row:
+                    files = self._fetch_files_mysql(cur, row["id"])
+                    return _row_to_standard(row, files)
+                cur.execute(
+                    "SELECT * FROM std_base WHERE std_id_norm = %s LIMIT 1",
+                    (compact,),
+                )
+                row = cur.fetchone()
+                if row:
+                    files = self._fetch_files_mysql(cur, row["id"])
+                    return _row_to_standard(row, files)
             return None
 
         if not SQLITE_PATH.is_file():
