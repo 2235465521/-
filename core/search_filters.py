@@ -113,6 +113,16 @@ def _parse_int(value: Any) -> int | None:
         return None
 
 
+def _looks_like_file_keyword(q: str) -> bool:
+    """编号/文件名类关键词才值得扫 file_name；纯中文产品名扫文件名很慢。"""
+    s = (q or "").strip()
+    if not s:
+        return False
+    if re.search(r"[A-Za-z0-9_/\\\-.]", s):
+        return True
+    return len(s) >= 8
+
+
 def _load_product_clusters() -> list[dict]:
     if not PRODUCT_CLUSTERS_PATH.is_file():
         return []
@@ -152,11 +162,18 @@ def build_advanced_where(
     q = (q or "").strip()
     if q:
         pattern = f"%{q}%"
-        clauses.append(
-            f"(b.std_chinesename LIKE {param} OR b.std_id LIKE {param} OR EXISTS "
-            f"(SELECT 1 FROM std_filepath f2 WHERE f2.base_id = b.id AND f2.file_name LIKE {param}))"
-        )
-        args.extend([pattern, pattern, pattern])
+        # 文件名匹配代价高：仅当关键词像编号/文件名时才扫 std_filepath
+        if _looks_like_file_keyword(q):
+            clauses.append(
+                f"(b.std_chinesename LIKE {param} OR b.std_id LIKE {param} OR EXISTS "
+                f"(SELECT 1 FROM std_filepath f2 WHERE f2.base_id = b.id AND f2.file_name LIKE {param}))"
+            )
+            args.extend([pattern, pattern, pattern])
+        else:
+            clauses.append(
+                f"(b.std_chinesename LIKE {param} OR b.std_id LIKE {param})"
+            )
+            args.extend([pattern, pattern])
 
     if filters.ex_states:
         placeholders = ",".join(param for _ in filters.ex_states)
@@ -245,3 +262,32 @@ def filter_options_payload(
     if product_suggestions is not None:
         payload["product_suggestions"] = product_suggestions
     return payload
+
+
+def parse_workflow(value: Any) -> str:
+    raw = (value or "").strip().lower()
+    if raw in ("filter_first", "filter-first", "filter"):
+        return "filter_first"
+    if raw in ("search_first", "search-first", "search"):
+        return "search_first"
+    return "combined"
+
+
+def validate_search_workflow(
+    workflow: str,
+    *,
+    q: str,
+    filters: AdvancedFilters,
+) -> str | None:
+    q = (q or "").strip()
+    if workflow == "filter_first":
+        if q and not filters.active():
+            return "「先筛选后查询」：请先设置高级筛选，再在范围内输入关键词"
+        if not q and not filters.active():
+            return "「先筛选后查询」：请先设置并应用高级筛选条件"
+    elif workflow == "search_first":
+        if filters.active() and not q:
+            return "「先查询后筛选」：请先输入关键词检索，再叠加高级筛选"
+        if not q and not filters.active():
+            return "「先查询后筛选」：请先输入标准编号或名称关键词"
+    return None

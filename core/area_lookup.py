@@ -2,12 +2,48 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
+
+import pymysql
 
 from paths import SQL_DUMP_DIR, UNITS_DB_PATH
 from core.sql_parser import iter_insert_rows
+from settings import (
+    MYSQL_DATABASE,
+    MYSQL_HOST,
+    MYSQL_PASSWORD,
+    MYSQL_PORT,
+    MYSQL_USER,
+)
 
 _AREA_CACHE: list[dict] | None = None
+
+
+def _load_area_rows_mysql() -> list[dict]:
+    if not MYSQL_PASSWORD:
+        return []
+    try:
+        conn = pymysql.connect(
+            host=MYSQL_HOST,
+            port=MYSQL_PORT,
+            user=MYSQL_USER,
+            password=MYSQL_PASSWORD,
+            database=MYSQL_DATABASE,
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=3,
+        )
+    except Exception:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT area_code, province_name, city_name, county_name, level FROM area_dict"
+            )
+            return list(cur.fetchall() or [])
+    except Exception:
+        return []
+    finally:
+        conn.close()
 
 
 def _load_area_rows() -> list[dict]:
@@ -42,6 +78,8 @@ def _load_area_rows() -> list[dict]:
                                 "level": rec[4],
                             }
                         )
+    if not rows:
+        rows = _load_area_rows_mysql()
     _AREA_CACHE = rows
     return rows
 

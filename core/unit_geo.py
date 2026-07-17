@@ -111,18 +111,12 @@ def _build_geo_where_mysql(
         return "", []
 
     extra = " AND " + " AND ".join(inner)
-    area_join = """
-              SELECT ad.area_code FROM area_dict ad
-              WHERE u.area_code IS NOT NULL AND u.area_code != ''
-                AND (ad.area_code = u.area_code OR ad.area_code LIKE CONCAT(u.area_code, '%%'))
-              ORDER BY LENGTH(ad.area_code) DESC
-              LIMIT 1
-    """
+    # 用 area_code 等值连接，避免相关子查询 + LIKE 前缀匹配导致全表扫描
     sql = f"""
         EXISTS (
           SELECT 1 FROM std_unit_relation r
           INNER JOIN unit_dict u ON u.unit_id = r.unit_id
-          LEFT JOIN area_dict a ON a.area_code = ({area_join})
+          INNER JOIN area_dict a ON a.area_code = u.area_code
           WHERE r.base_id = b.id
             {extra}
         )

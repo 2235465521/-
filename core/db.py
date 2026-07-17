@@ -569,7 +569,10 @@ class Database:
             )
             rows = [dict(r) for r in cur.fetchall()]
             items = [
-                self._row_to_lite(r, self._has_pdf_sqlite(conn, r["id"])) for r in rows
+                self._row_to_lite(
+                    r, True if pdf_only else self._has_pdf_sqlite(conn, r["id"])
+                )
+                for r in rows
             ]
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
@@ -624,7 +627,10 @@ class Database:
             )
             rows = list(cur.fetchall())
             items = [
-                self._row_to_lite(r, self._has_pdf_mysql(cur, r["id"])) for r in rows
+                self._row_to_lite(
+                    r, True if pdf_only else self._has_pdf_mysql(cur, r["id"])
+                )
+                for r in rows
             ]
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {

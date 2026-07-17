@@ -31,7 +31,12 @@ from core.pdf_discovery import discover_pdfs_on_disk  # noqa: E402
 from core.pdf_service import collect_files_for_standard, find_pdf_on_disk  # noqa: E402
 from core.product_clusters import list_clusters_brief  # noqa: E402
 from core.product_search import product_search  # noqa: E402
-from core.search_filters import filter_options_payload, parse_advanced_filters  # noqa: E402
+from core.search_filters import (  # noqa: E402
+    filter_options_payload,
+    parse_advanced_filters,
+    parse_workflow,
+    validate_search_workflow,
+)
 from paths import PDF_ROOT, PDF_SEARCH_ROOT, SQLITE_PATH, TUANGBIAO_DIR, ZHIDU_DIR  # noqa: E402
 from core.tuangbiao_catalog import tuangbiao  # noqa: E402
 from core.zhidu_catalog import zhidu  # noqa: E402
@@ -163,6 +168,11 @@ def api_search():
             return jsonify({"ok": True, "query": q, **data})
 
         filters = parse_advanced_filters(request.args)
+        workflow = parse_workflow(request.args.get("workflow"))
+        wf_err = validate_search_workflow(workflow, q=q, filters=filters)
+        if wf_err:
+            return jsonify({"ok": False, "error": wf_err, "workflow": workflow}), 400
+
         if not q and not filters.active():
             return jsonify({"ok": False, "error": "请输入关键词或设置高级筛选条件"}), 400
 
@@ -199,7 +209,7 @@ def api_search():
             data["items"] = _enrich_items(
                 data.get("items") or [], scan_disk=scan_disk
             )
-        return jsonify({"ok": True, "query": q, **data})
+        return jsonify({"ok": True, "query": q, "workflow": workflow, **data})
     except ValueError:
         return jsonify({"ok": False, "error": "请求参数无效"}), 400
     except Exception as exc:

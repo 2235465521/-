@@ -38,6 +38,7 @@
 
   const PER_PAGE = 10;
   const HISTORY_KEY = "pdf_search_history_v1";
+  let searchController = null;
   let currentMode = "search";
   let currentPage = 1;
   const modeQueries = {
@@ -123,6 +124,18 @@
     renderHistory();
   }
 
+  function removeHistory(q) {
+    const text = (q || "").trim();
+    const list = loadHistory().filter(x => x !== text);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+    renderHistory();
+  }
+
+  function clearHistory() {
+    localStorage.removeItem(HISTORY_KEY);
+    renderHistory();
+  }
+
   function renderHistory() {
     if (!historyWrap || !historyChips) return;
     if (currentMode !== "search") {
@@ -132,22 +145,35 @@
     }
     historyWrap.hidden = false;
     const list = loadHistory();
+    const clearBtn = document.getElementById("btnHistoryClear");
     if (!list.length) {
       historyWrap.classList.add("empty");
       historyChips.innerHTML = "";
+      if (clearBtn) clearBtn.hidden = true;
       return;
     }
     historyWrap.classList.remove("empty");
+    if (clearBtn) clearBtn.hidden = false;
     historyChips.innerHTML = list
       .map(
         q =>
-          `<button type="button" class="chip" data-q="${escapeHtml(q)}"><span class="chip-text">${escapeHtml(q)}</span></button>`
+          `<button type="button" class="chip" data-q="${escapeHtml(q)}" title="点击再次检索">
+            <span class="chip-text">${escapeHtml(q)}</span>
+            <span class="chip-del" data-del="${escapeHtml(q)}" title="删除此记录" aria-label="删除">×</span>
+          </button>`
       )
       .join("");
     historyChips.querySelectorAll(".chip").forEach(chip => {
-      chip.addEventListener("click", () => {
+      chip.addEventListener("click", e => {
+        if (e.target.closest(".chip-del")) return;
         if (input) input.value = chip.dataset.q || "";
         doSearch(1);
+      });
+    });
+    historyChips.querySelectorAll(".chip-del").forEach(del => {
+      del.addEventListener("click", e => {
+        e.stopPropagation();
+        removeHistory(del.dataset.del || "");
       });
     });
   }
@@ -205,7 +231,10 @@
         mode === "tuangbiao";
       searchTools.hidden = !showBulk;
       searchTools.style.removeProperty("display");
+      const bulkBar = searchTools.querySelector(".bulk-bar");
+      if (bulkBar) bulkBar.hidden = mode !== "search" && mode !== "product" && mode !== "tuangbiao";
     }
+    window.WorkflowUI?.updateWorkflowUi?.();
     const bulkScan = document.querySelector(".bulk-scan");
     if (bulkScan) {
       bulkScan.hidden = mode === "tuangbiao";
@@ -234,7 +263,9 @@
       product: "同类检索",
       tuangbiao: "检索团标",
     };
-    if (btnSearch) btnSearch.textContent = btnLabels[mode] || "检索";
+    if (btnSearch && !btnSearch.classList.contains("is-cancel")) {
+      btnSearch.textContent = btnLabels[mode] || "检索";
+    }
 
     updateCatalogBanner(mode);
     updatePageHead(mode);
@@ -508,9 +539,59 @@
     window.AdvancedUI?.onResultsRendered?.(data, currentMode);
   }
 
+  function isAbortError(err) {
+    return err?.name === "AbortError" || err?.code === 20;
+  }
+
+  function searchButtonLabel() {
+    const btnLabels = {
+      product: "同类检索",
+      tuangbiao: "检索团标",
+    };
+    return btnLabels[currentMode] || "检索";
+  }
+
+  function cancelSearch() {
+    if (searchController) {
+      searchController.abort();
+      searchController = null;
+    }
+  }
+
+  function setSearching(on) {
+    if (!btnSearch) return;
+    if (on) {
+      btnSearch.disabled = false;
+      btnSearch.type = "button";
+      btnSearch.textContent = "取消";
+      btnSearch.classList.add("is-cancel");
+      btnSearch.title = "取消当前检索（Esc）";
+      btnSearch.setAttribute("aria-label", "取消检索");
+    } else {
+      btnSearch.classList.remove("is-cancel");
+      btnSearch.type = "submit";
+      btnSearch.textContent = searchButtonLabel();
+      btnSearch.title = "";
+      btnSearch.removeAttribute("aria-label");
+      btnSearch.disabled = false;
+    }
+  }
+
   async function doSearch(page) {
     const q = (input?.value || "").trim();
+    const workflow = window.WorkflowUI?.getWorkflow?.() || "search_first";
     const advActive = currentMode === "search" && window.AdvancedUI?.hasActiveFilters?.();
+
+    if (currentMode === "search" && workflow === "filter_first" && !advActive) {
+      results.innerHTML =
+        '<div class="alert">「先筛选后查询」：请先打开高级选项，设置条件并点击「应用筛选」</div>';
+      return;
+    }
+    if (currentMode === "search" && workflow === "search_first" && !q) {
+      results.innerHTML =
+        '<div class="alert">「先查询后筛选」：请先输入标准编号或名称关键词</div>';
+      return;
+    }
     if (!q && !advActive) {
       const hints = {
         tuangbiao: "请输入团标名称或协会名关键词",
@@ -519,9 +600,19 @@
       return;
     }
     currentPage = page || 1;
-    if (btnSearch) btnSearch.disabled = true;
-    results.innerHTML =
-      '<div class="loading"><div class="spinner"></div>正在检索…</div>';
+
+    cancelSearch();
+    searchController = new AbortController();
+    const { signal } = searchController;
+
+    setSearching(true);
+    results.innerHTML = `
+      <div class="loading searching">
+        <div class="spinner"></div>
+        <p class="loading-text">正在检索…</p>
+        <button type="button" class="btn-cancel-search" id="btnCancelSearch">取消检索</button>
+      </div>`;
+    document.getElementById("btnCancelSearch")?.addEventListener("click", cancelSearch);
 
     const params = new URLSearchParams();
     params.set("q", q);
@@ -535,27 +626,29 @@
       params.set("source", currentMode);
     } else if (advActive && window.AdvancedUI?.filterQuery) {
       if (window.AdvancedUI.validateRankFilter && !window.AdvancedUI.validateRankFilter()) {
-        if (btnSearch) btnSearch.disabled = false;
+        setSearching(false);
+        searchController = null;
         return;
       }
       const extra = new URLSearchParams(window.AdvancedUI.filterQuery());
       extra.forEach((v, k) => params.set(k, v));
     }
+    if (currentMode === "search") params.set("workflow", workflow);
 
     try {
-      const res = await fetch(`/api/search?${params.toString()}`);
+      const res = await fetch(`/api/search?${params.toString()}`, { signal });
       const ct = res.headers.get("content-type") || "";
       let data;
       if (ct.includes("application/json")) {
         data = await res.json();
       } else {
-        const text = await res.text();
         throw new Error(
           res.status === 0
             ? "无法连接服务器，请确认已启动 启动.bat"
             : `服务器响应异常（HTTP ${res.status}），请重启服务后重试`
         );
       }
+      if (signal.aborted) return;
       if (!data.ok) {
         results.innerHTML = `<div class="alert">${escapeHtml(data.error || "检索失败")}</div>`;
         return;
@@ -563,9 +656,14 @@
       if (currentMode === "search" && q) saveHistory(q);
       renderItems(data);
     } catch (e) {
+      if (isAbortError(e)) {
+        results.innerHTML = '<div class="alert alert-cancel">已取消检索</div>';
+        return;
+      }
       results.innerHTML = `<div class="alert">检索失败：${escapeHtml(e.message || "网络错误")}</div>`;
     } finally {
-      if (btnSearch) btnSearch.disabled = false;
+      if (searchController?.signal === signal) searchController = null;
+      setSearching(false);
     }
   }
 
@@ -596,9 +694,26 @@
   if (form) {
     form.addEventListener("submit", e => {
       e.preventDefault();
+      if (btnSearch?.classList.contains("is-cancel")) {
+        cancelSearch();
+        return;
+      }
       doSearch(1);
     });
   }
+
+  btnSearch?.addEventListener("click", e => {
+    if (!btnSearch.classList.contains("is-cancel")) return;
+    e.preventDefault();
+    cancelSearch();
+  });
+
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && btnSearch?.classList.contains("is-cancel")) {
+      e.preventDefault();
+      cancelSearch();
+    }
+  });
 
   window.addEventListener("advanced-search", () => doSearch(1));
 
@@ -613,6 +728,11 @@
       headerDbStatus.textContent = "服务连接中…";
     }
   }
+
+  document.getElementById("btnHistoryClear")?.addEventListener("click", () => {
+    if (!loadHistory().length) return;
+    if (confirm("确定清空全部最近检索记录？")) clearHistory();
+  });
 
   renderHistory();
   loadProductClusters();
