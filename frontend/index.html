@@ -6,8 +6,8 @@
   <meta http-equiv="Cache-Control" content="no-cache" />
   <title>ZKBZ 标准PDF下载</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/main.css?v=4.2.1" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/main.css?v=4.3.0" />
 </head>
 <body>
   <div class="app-shell" id="appLayout">
@@ -22,7 +22,7 @@
       <nav class="sidebar-nav" aria-label="功能模块">
         <div class="nav-group active-mode" data-mode="search">
           <button type="button" class="sidebar-mode" data-mode-switch="search">
-            <span class="mode-icon" aria-hidden="true">🔍</span>
+            <span class="mode-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
             <span class="mode-text">
               <span class="mode-name">标准检索</span>
               <span class="mode-desc">编号 / 名称 / 高级筛选</span>
@@ -31,7 +31,7 @@
         </div>
         <div class="nav-group" data-mode="product">
           <button type="button" class="sidebar-mode" data-mode-switch="product">
-            <span class="mode-icon" aria-hidden="true">📦</span>
+            <span class="mode-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/></svg></span>
             <span class="mode-text">
               <span class="mode-name">同类产品</span>
               <span class="mode-desc">产品名扩展同类标准</span>
@@ -47,7 +47,7 @@
         </div>
         <div class="nav-group" data-mode="tuangbiao">
           <button type="button" class="sidebar-mode" data-mode-switch="tuangbiao">
-            <span class="mode-icon" aria-hidden="true">📋</span>
+            <span class="mode-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span>
             <span class="mode-text">
               <span class="mode-name">团标征求意见稿</span>
               <span class="mode-desc">按名称检索 PDF</span>
@@ -56,7 +56,7 @@
         </div>
         <div class="nav-group" data-mode="batch">
           <button type="button" class="sidebar-mode" data-mode-switch="batch">
-            <span class="mode-icon" aria-hidden="true">☁</span>
+            <span class="mode-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg></span>
             <span class="mode-text">
               <span class="mode-name">批量下载</span>
               <span class="mode-desc">Excel 清单打包 ZIP</span>
@@ -75,19 +75,17 @@
 
     <div class="app-body">
       <header class="app-header">
-        <span class="header-badge">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          企业级标准检索
-        </span>
+        <span class="header-badge">标准PDF下载</span>
         <div class="header-meta">
           <span class="header-db" id="headerDbStatus">加载中…</span>
+          <span class="header-avatar" title="本地服务">本</span>
         </div>
       </header>
 
       <main class="main-area mode-search" id="mainArea">
         <div class="page-head" id="pageHead">
-          <h2 class="page-title" id="pageTitle">企业级标准下载中心</h2>
-          <p class="page-subtitle" id="pageSubtitle">构建专属合规资源库，支持多维度筛选与海量标准一键打包提取。</p>
+          <h2 class="page-title" id="pageTitle">标准检索</h2>
+          <p class="page-subtitle" id="pageSubtitle">支持标准编号、名称检索与多维度高级筛选，一键下载 PDF。</p>
         </div>
 
         <div class="search-tools" id="searchTools">
@@ -317,7 +315,7 @@
   </div>
 
   <script src="js/workflow.js?v=1.0.0"></script>
-  <script src="js/app.js?v=4.2.1"></script>
+  <script src="js/app.js?v=4.3.0"></script>
   <script src="js/advanced.js?v=4.1.2"></script>
   <script src="js/batch.js?v=4.0.0"></script>
 </body>

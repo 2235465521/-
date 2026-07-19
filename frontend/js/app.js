@@ -19,11 +19,11 @@
 
   const PAGE_COPY = {
     search: {
-      title: "企业级标准下载中心",
-      subtitle: "构建专属合规资源库，支持多维度筛选与海量标准一键打包提取。",
+      title: "标准检索",
+      subtitle: "支持标准编号、名称检索与多维度高级筛选，一键下载 PDF。",
     },
     product: {
-      title: "同类产品标准检索",
+      title: "同类产品",
       subtitle: "输入产品名称，自动扩展同类关键词并检索相关标准。",
     },
     tuangbiao: {
@@ -433,7 +433,7 @@
       const href = firstDownloadHref(data.item);
       if (dl && href) {
         dl.classList.remove("disabled");
-        dl.outerHTML = `<a class="btn-row-dl" href="${href}" download title="下载" onclick="event.stopPropagation()">↓</a>`;
+        dl.outerHTML = `<a class="btn-row-dl" href="${href}" download title="下载" onclick="event.stopPropagation()">下载</a>`;
       }
     } catch (e) {
       cell.innerHTML = `<div class="alert">${escapeHtml(e.message || "加载失败")}</div>`;
@@ -501,8 +501,8 @@
             <td class="col-action">
               ${
                 dlHref
-                  ? `<a class="btn-row-dl" href="${dlHref}" download title="下载" onclick="event.stopPropagation()">↓</a>`
-                  : `<span class="btn-row-dl disabled">↓</span>`
+                  ? `<a class="btn-row-dl" href="${dlHref}" download title="下载" onclick="event.stopPropagation()">下载</a>`
+                  : `<span class="btn-row-dl disabled">下载</span>`
               }
             </td>
           </tr>
