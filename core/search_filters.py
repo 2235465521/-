@@ -162,18 +162,21 @@ def build_advanced_where(
     q = (q or "").strip()
     if q:
         pattern = f"%{q}%"
-        # 文件名匹配代价高：仅当关键词像编号/文件名时才扫 std_filepath
+        # 检索策略：
+        # - 纯中文/短词：只扫标准名称（避免无意义的 std_id LIKE '%中文%'）
+        # - 编号类：与普通检索一致（标准号前缀 + 名称），不扫 filepath，避免先查询后筛选变慢
         if _looks_like_file_keyword(q):
+            # 与普通检索一致：前缀命中 std_id（可走索引）+ 名称模糊；不做 filepath 全表扫描
+            prefix = f"{q}%"
+            norm = re.sub(r"\s+", "", q.strip().upper()).replace("／", "/")
             clauses.append(
-                f"(b.std_chinesename LIKE {param} OR b.std_id LIKE {param} OR EXISTS "
-                f"(SELECT 1 FROM std_filepath f2 WHERE f2.base_id = b.id AND f2.file_name LIKE {param}))"
+                f"(b.std_id LIKE {param} OR REPLACE(UPPER(b.std_id),' ','') = {param} "
+                f"OR b.std_chinesename LIKE {param})"
             )
-            args.extend([pattern, pattern, pattern])
+            args.extend([prefix, norm, pattern])
         else:
-            clauses.append(
-                f"(b.std_chinesename LIKE {param} OR b.std_id LIKE {param})"
-            )
-            args.extend([pattern, pattern])
+            clauses.append(f"b.std_chinesename LIKE {param}")
+            args.append(pattern)
 
     if filters.ex_states:
         placeholders = ",".join(param for _ in filters.ex_states)
@@ -204,31 +207,30 @@ def build_advanced_where(
             clauses.append(f"({or_parts})")
             args.extend([f"%{kw}%" for kw in kws])
 
-    if filters.year_from is not None:
+    # 年份：走 release_date 区间以利用 idx_release_date（无发布日期的记录不纳入年份筛选）
+    if filters.year_from is not None or filters.year_to is not None:
+        y_from = filters.year_from
+        y_to = filters.year_to
         if param == "%s":
-            clauses.append(
-                f"(CAST(SUBSTRING(b.release_date, 1, 4) AS SIGNED) >= {param} "
-                f"OR CAST(SUBSTRING(b.std_id, -4) AS SIGNED) >= {param})"
-            )
+            if y_from is not None:
+                clauses.append(f"b.release_date >= {param}")
+                args.append(f"{y_from:04d}-01-01")
+            if y_to is not None:
+                clauses.append(f"b.release_date <= {param}")
+                args.append(f"{y_to:04d}-12-31")
         else:
-            clauses.append(
-                f"(CAST(substr(b.release_date, 1, 4) AS INTEGER) >= {param} "
-                f"OR CAST(substr(b.std_id, -4) AS INTEGER) >= {param})"
-            )
-        args.extend([filters.year_from, filters.year_from])
-
-    if filters.year_to is not None:
-        if param == "%s":
-            clauses.append(
-                f"(CAST(SUBSTRING(b.release_date, 1, 4) AS SIGNED) <= {param} "
-                f"OR CAST(SUBSTRING(b.std_id, -4) AS SIGNED) <= {param})"
-            )
-        else:
-            clauses.append(
-                f"(CAST(substr(b.release_date, 1, 4) AS INTEGER) <= {param} "
-                f"OR CAST(substr(b.std_id, -4) AS INTEGER) <= {param})"
-            )
-        args.extend([filters.year_to, filters.year_to])
+            if y_from is not None:
+                clauses.append(
+                    f"(CAST(substr(b.release_date, 1, 4) AS INTEGER) >= {param} "
+                    f"OR CAST(substr(b.std_id, -4) AS INTEGER) >= {param})"
+                )
+                args.extend([y_from, y_from])
+            if y_to is not None:
+                clauses.append(
+                    f"(CAST(substr(b.release_date, 1, 4) AS INTEGER) <= {param} "
+                    f"OR CAST(substr(b.std_id, -4) AS INTEGER) <= {param})"
+                )
+                args.extend([y_to, y_to])
 
     if std_folder and folder_sql:
         fsql = folder_sql.lstrip(" AND ")
@@ -291,15 +293,18 @@ def validate_search_workflow(
     q: str,
     filters: AdvancedFilters,
 ) -> str | None:
+    """兼容旧客户端显式 workflow；合并模式下不强制步骤顺序。"""
     q = (q or "").strip()
+    if workflow in ("", "combined", "auto"):
+        return None
     if workflow == "filter_first":
         if q and not filters.active():
-            return "「先筛选后查询」：请先设置高级筛选，再在范围内输入关键词"
+            return "请先设置高级筛选条件，再输入关键词"
         if not q and not filters.active():
-            return "「先筛选后查询」：请先设置并应用高级筛选条件"
+            return "请输入关键词或设置高级筛选条件"
     elif workflow == "search_first":
         if filters.active() and not q:
-            return "「先查询后筛选」：请先输入关键词检索，再叠加高级筛选"
+            return "请先输入关键词检索，再叠加高级筛选"
         if not q and not filters.active():
-            return "「先查询后筛选」：请先输入标准编号或名称关键词"
+            return "请输入关键词或设置高级筛选条件"
     return None

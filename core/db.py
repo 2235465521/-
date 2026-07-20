@@ -16,6 +16,7 @@ from config import (
     MYSQL_USER,
     SQLITE_PATH,
 )
+from core.std_normalize import db_filepath_matches_std
 
 EX_STATE_LABEL = {0: "废止", 1: "现行", 2: "即将实施"}
 
@@ -282,16 +283,77 @@ class Database:
         return None
 
     def _has_pdf_sqlite(self, conn, base_id: int) -> bool:
+        files = self._fetch_files_sqlite(conn, base_id)
+        # 需配合调用方传入 std_id；单查兼容用 base 再取一次
         row = conn.execute(
-            "SELECT 1 FROM std_filepath WHERE base_id = ? LIMIT 1", (base_id,)
+            "SELECT std_id FROM std_base WHERE id = ?", (base_id,)
         ).fetchone()
-        return row is not None
+        std_id = (dict(row).get("std_id") if row else "") or ""
+        return self._files_match_std(std_id, files)
 
     def _has_pdf_mysql(self, cur, base_id: int) -> bool:
+        files = self._fetch_files_mysql(cur, base_id)
+        cur.execute("SELECT std_id FROM std_base WHERE id = %s", (base_id,))
+        row = cur.fetchone()
+        std_id = (row.get("std_id") if row else "") or ""
+        return self._files_match_std(std_id, files)
+
+    @staticmethod
+    def _files_match_std(std_id: str, files: list[dict]) -> bool:
+        for f in files or []:
+            if db_filepath_matches_std(std_id, f.get("file_name"), f.get("file_path")):
+                return True
+        return False
+
+    def _fetch_files_by_ids_mysql(self, cur, base_ids: list[int]) -> dict[int, list[dict]]:
+        out: dict[int, list[dict]] = {i: [] for i in base_ids}
+        if not base_ids:
+            return out
+        placeholders = ",".join(["%s"] * len(base_ids))
         cur.execute(
-            "SELECT 1 FROM std_filepath WHERE base_id = %s LIMIT 1", (base_id,)
+            f"""
+            SELECT id, base_id, file_path, file_name, file_size
+            FROM std_filepath
+            WHERE base_id IN ({placeholders})
+            ORDER BY file_name
+            """,
+            tuple(base_ids),
         )
-        return cur.fetchone() is not None
+        for row in cur.fetchall():
+            bid = int(row["base_id"])
+            out.setdefault(bid, []).append(row)
+        return out
+
+    def _fetch_files_by_ids_sqlite(self, conn, base_ids: list[int]) -> dict[int, list[dict]]:
+        out: dict[int, list[dict]] = {i: [] for i in base_ids}
+        if not base_ids:
+            return out
+        placeholders = ",".join(["?"] * len(base_ids))
+        cur = conn.execute(
+            f"""
+            SELECT id, base_id, file_path, file_name, file_size
+            FROM std_filepath
+            WHERE base_id IN ({placeholders})
+            ORDER BY file_name
+            """,
+            tuple(base_ids),
+        )
+        for row in cur.fetchall():
+            d = dict(row)
+            bid = int(d["base_id"])
+            out.setdefault(bid, []).append(d)
+        return out
+
+    def _rows_to_lite_with_pdf(
+        self, rows: list[dict], files_by_id: dict[int, list[dict]]
+    ) -> list[dict]:
+        items = []
+        for r in rows:
+            bid = int(r["id"])
+            std_id = r.get("std_id") or ""
+            has_pdf = self._files_match_std(std_id, files_by_id.get(bid) or [])
+            items.append(self._row_to_lite(r, has_pdf))
+        return items
 
     def _folder_exists_sql(self, std_folder: str | None) -> tuple[str, tuple]:
         if not std_folder:
@@ -423,9 +485,10 @@ class Database:
                 (*args, per_page, offset),
             )
             rows = [dict(r) for r in cur.fetchall()]
-            items = [
-                self._row_to_lite(r, self._has_pdf_sqlite(conn, r["id"])) for r in rows
-            ]
+            files_by_id = self._fetch_files_by_ids_sqlite(
+                conn, [int(r["id"]) for r in rows]
+            )
+            items = self._rows_to_lite_with_pdf(rows, files_by_id)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,
@@ -446,12 +509,20 @@ class Database:
         pdf_only: bool,
         std_folder: str | None,
     ) -> dict:
+        from core.search_filters import _looks_like_file_keyword
+
         pattern = f"%{q}%"
         norm = normalize_std_id(q)
-        where_parts = [
-            "(b.std_id LIKE %s OR REPLACE(UPPER(b.std_id),' ','') = %s OR b.std_chinesename LIKE %s)"
-        ]
-        args: list = [pattern, norm, pattern]
+        # 纯中文词：只匹配名称；编号类：标准号精确/模糊 + 名称
+        if _looks_like_file_keyword(q):
+            # 标准号优先前缀匹配（可走 uniq_std_id），再回退归一化精确匹配与名称模糊
+            where_parts = [
+                "(b.std_id LIKE %s OR REPLACE(UPPER(b.std_id),' ','') = %s OR b.std_chinesename LIKE %s)"
+            ]
+            args: list = [f"{q}%", norm, pattern]
+        else:
+            where_parts = ["b.std_chinesename LIKE %s"]
+            args = [pattern]
         if pdf_only:
             where_parts.append(
                 "EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
@@ -463,14 +534,10 @@ class Database:
         args.extend(folder_args)
         with self._mysql() as conn:
             cur = conn.cursor()
-            cur.execute(
-                f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {where}",
-                args,
-            )
-            total = int(cur.fetchone()["c"])
+            total = self._mysql_count_capped(cur, where, args)
             cur.execute(
                 f"""
-                SELECT DISTINCT b.* FROM std_base b
+                SELECT b.* FROM std_base b
                 WHERE {where}
                 ORDER BY b.std_id
                 LIMIT %s OFFSET %s
@@ -478,9 +545,10 @@ class Database:
                 (*args, per_page, offset),
             )
             rows = list(cur.fetchall())
-            items = [
-                self._row_to_lite(r, self._has_pdf_mysql(cur, r["id"])) for r in rows
-            ]
+            files_by_id = self._fetch_files_by_ids_mysql(
+                cur, [int(r["id"]) for r in rows]
+            )
+            items = self._rows_to_lite_with_pdf(rows, files_by_id)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,
@@ -491,6 +559,22 @@ class Database:
             "search_mode": "text",
             "pdf_only": pdf_only,
         }
+
+    # 计数上限：避免对超大结果集做全表精确 COUNT（分页仍可用）
+    _MYSQL_COUNT_CAP = 10001
+
+    def _mysql_count_capped(self, cur, where: str, args: list) -> int:
+        cur.execute(
+            f"""
+            SELECT COUNT(*) AS c FROM (
+              SELECT b.id FROM std_base b
+              WHERE {where}
+              LIMIT %s
+            ) t
+            """,
+            (*args, self._MYSQL_COUNT_CAP),
+        )
+        return int(cur.fetchone()["c"])
 
     def search_page_advanced(
         self,
@@ -513,12 +597,12 @@ class Database:
         offset = (page - 1) * per_page
         from core.unit_geo import geo_index_ready, needs_geo_filter
 
-        if needs_geo_filter(flt) and geo_index_ready():
-            return self._search_page_advanced_sqlite(
-                q, page, per_page, offset, pdf_only, std_folder, flt
-            )
         if self._mysql_available():
             return self._search_page_advanced_mysql(
+                q, page, per_page, offset, pdf_only, std_folder, flt
+            )
+        if needs_geo_filter(flt) and geo_index_ready():
+            return self._search_page_advanced_sqlite(
                 q, page, per_page, offset, pdf_only, std_folder, flt
             )
         return self._search_page_advanced_sqlite(
@@ -568,12 +652,10 @@ class Database:
                 (*args, per_page, offset),
             )
             rows = [dict(r) for r in cur.fetchall()]
-            items = [
-                self._row_to_lite(
-                    r, True if pdf_only else self._has_pdf_sqlite(conn, r["id"])
-                )
-                for r in rows
-            ]
+            files_by_id = self._fetch_files_by_ids_sqlite(
+                conn, [int(r["id"]) for r in rows]
+            )
+            items = self._rows_to_lite_with_pdf(rows, files_by_id)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,
@@ -611,14 +693,10 @@ class Database:
         mysql_args = list(args)
         with self._mysql() as conn:
             cur = conn.cursor()
-            cur.execute(
-                f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {base_where}",
-                mysql_args,
-            )
-            total = int(cur.fetchone()["c"])
+            total = self._mysql_count_capped(cur, base_where, mysql_args)
             cur.execute(
                 f"""
-                SELECT DISTINCT b.* FROM std_base b
+                SELECT b.* FROM std_base b
                 WHERE {base_where}
                 ORDER BY b.std_id
                 LIMIT %s OFFSET %s
@@ -626,12 +704,10 @@ class Database:
                 (*mysql_args, per_page, offset),
             )
             rows = list(cur.fetchall())
-            items = [
-                self._row_to_lite(
-                    r, True if pdf_only else self._has_pdf_mysql(cur, r["id"])
-                )
-                for r in rows
-            ]
+            files_by_id = self._fetch_files_by_ids_mysql(
+                cur, [int(r["id"]) for r in rows]
+            )
+            items = self._rows_to_lite_with_pdf(rows, files_by_id)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,
@@ -742,9 +818,10 @@ class Database:
                 where_args + score_args + list(folder_args) + [per_page, offset],
             )
             rows = [dict(r) for r in cur.fetchall()]
-            items = [
-                self._row_to_lite(r, self._has_pdf_sqlite(conn, r["id"])) for r in rows
-            ]
+            files_by_id = self._fetch_files_by_ids_sqlite(
+                conn, [int(r["id"]) for r in rows]
+            )
+            items = self._rows_to_lite_with_pdf(rows, files_by_id)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,
@@ -796,9 +873,10 @@ class Database:
                 where_args + score_args + list(folder_args) + [per_page, offset],
             )
             rows = list(cur.fetchall())
-            items = [
-                self._row_to_lite(r, self._has_pdf_mysql(cur, r["id"])) for r in rows
-            ]
+            files_by_id = self._fetch_files_by_ids_mysql(
+                cur, [int(r["id"]) for r in rows]
+            )
+            items = self._rows_to_lite_with_pdf(rows, files_by_id)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,

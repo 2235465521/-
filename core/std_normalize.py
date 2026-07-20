@@ -18,13 +18,64 @@ _STD_COMPACT = re.compile(
 
 
 def normalize_std_id(std_id: str) -> str:
-    """统一检索键：大写、去空格、去斜杠、统一连字符。"""
+    """统一检索键：大写、去空格、去斜杠/下划线、统一连字符。
+
+    兼容常见文件名写法：GB/T、GB_T、GBT 均归一为 GBT。
+    """
     s = std_id.strip().upper()
     s = s.replace("／", "/")
     s = re.sub(r"\s+", "", s)
-    s = s.replace("/", "")
+    s = s.replace("/", "").replace("_", "")
     s = s.replace("—", "-").replace("－", "-")
     return s
+
+
+def _normalize_year(year: str | None) -> str:
+    y = (year or "").strip()
+    if not y:
+        return ""
+    if len(y) == 2 and y.isdigit():
+        return f"20{y}"
+    return y
+
+
+def parse_std_parts(text: str) -> tuple[str, str, str] | None:
+    """解析标准号为 (前缀, 编号, 年份)。前缀无斜杠，如 GBT / GB / JBT。"""
+    raw = normalize_std_id(text or "")
+    if not raw or len(raw) < 3:
+        return None
+    compact = raw.replace("—", "-").replace("－", "-")
+    m = _STD_COMPACT.match(compact)
+    if m:
+        prefix = (m.group(1) + m.group(2)).upper()
+        return prefix, m.group(3), _normalize_year(m.group(4))
+    m2 = re.match(
+        r"^([A-Z]{1,6})([\d]+(?:\.\d+)*)(?:-(\d{2,4}))?$",
+        compact,
+    )
+    if m2:
+        return m2.group(1).upper(), m2.group(2), _normalize_year(m2.group(3))
+    return None
+
+
+def extract_std_token_from_filename(filename: str) -> str:
+    """从文件名提取前导标准号片段（去掉 _F_ 后缀与中文题名）。"""
+    stem = Path(filename or "").stem.upper()
+    stem = re.split(r"_[FTZX]_", stem, maxsplit=1)[0]
+    stem = re.split(r"[\u4e00-\u9fff]", stem, maxsplit=1)[0]
+    stem = normalize_std_id(stem)
+    stem = stem.rstrip("_- .")
+    return stem
+
+
+def file_std_identity_key(filename: str) -> str | None:
+    """同一标准不同文件名的去重键（如 GBT 4706.59-2024 与 GBT4706.59-2024）。"""
+    token = extract_std_token_from_filename(filename)
+    parts = parse_std_parts(token)
+    if not parts:
+        return None
+    prefix, num, year = parts
+    return f"{prefix}{num}-{year}" if year else f"{prefix}{num}"
 
 
 def _dash_variants(s: str) -> set[str]:
@@ -148,14 +199,36 @@ def pdf_path_variants(rel_path: str, file_name: str, std_id: str | None = None) 
 
 
 def filename_contains_std_id(filename: str, std_id: str) -> bool:
-    """判断文件名是否包含与标准号等价的编号（忽略 /、空格及 _F_ 等后缀）。"""
-    stem = Path(filename).stem.upper()
-    stem = re.sub(r"_[FTZX]_", "_", stem)
-    fn_norm = normalize_std_id(stem)
-    sid_norm = normalize_std_id(std_id)
-    if not sid_norm or len(sid_norm) < 4:
+    """判断文件名是否对应该标准号（前缀+编号一致；有年份则须同年）。"""
+    sid = parse_std_parts(std_id)
+    if not sid:
         return False
-    return sid_norm in fn_norm
+    token = extract_std_token_from_filename(filename)
+    fid = parse_std_parts(token)
+    if not fid:
+        return False
+    if sid[0] != fid[0] or sid[1] != fid[1]:
+        return False
+    if sid[2]:
+        return bool(fid[2]) and sid[2] == fid[2]
+    return True
+
+
+def db_filepath_matches_std(
+    std_id: str,
+    file_name: str | None = None,
+    file_path: str | None = None,
+) -> bool:
+    """库内 filepath 记录是否对应当前标准号（含年份），与详情页展示过滤一致。"""
+    sid = (std_id or "").strip()
+    if not sid:
+        return True
+    name = (file_name or "").strip()
+    rel = (file_path or "").strip()
+    check = name or Path(rel.replace("\\", "/")).name
+    if not check:
+        return False
+    return filename_contains_std_id(check, sid)
 
 
 def std_id_glob_patterns(std_id: str) -> list[str]:

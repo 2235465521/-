@@ -17,7 +17,17 @@ def _default_clusters() -> list[dict]:
             "id": "oral_care",
             "name": "口腔护理用品",
             "keywords": ["牙膏", "牙刷", "牙杯", "漱口杯", "牙线", "口腔", "牙齿"],
-        }
+        },
+        {
+            "id": "dairy",
+            "name": "乳制品",
+            "keywords": ["牛奶", "酸奶", "乳粉", "奶粉", "奶酪"],
+        },
+        {
+            "id": "electrical_appliance",
+            "name": "家用电器",
+            "keywords": ["家用电器", "冰箱", "洗衣机", "空调", "电视机"],
+        },
     ]
 
 

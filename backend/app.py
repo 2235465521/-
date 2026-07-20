@@ -27,7 +27,6 @@ from core.catalog_download import build_zip_from_catalog_ids  # noqa: E402
 from core.geo_download import count_geo_matches, geo_download_status  # noqa: E402
 from core.area_lookup import suggest_companies  # noqa: E402
 from core.db import StandardInfo, db  # noqa: E402
-from core.pdf_discovery import discover_pdfs_on_disk  # noqa: E402
 from core.pdf_service import collect_files_for_standard, find_pdf_on_disk  # noqa: E402
 from core.product_clusters import list_clusters_brief  # noqa: E402
 from core.product_search import product_search  # noqa: E402
@@ -37,6 +36,7 @@ from core.search_filters import (  # noqa: E402
     parse_workflow,
     validate_search_workflow,
 )
+from core.std_normalize import db_filepath_matches_std  # noqa: E402
 from paths import PDF_ROOT, PDF_SEARCH_ROOT, SQLITE_PATH, TUANGBIAO_DIR, ZHIDU_DIR  # noqa: E402
 from core.tuangbiao_catalog import tuangbiao  # noqa: E402
 from core.zhidu_catalog import zhidu  # noqa: E402
@@ -73,8 +73,8 @@ def create_app() -> Flask:
     return app
 
 
-def _standard_json(std: StandardInfo, *, scan_disk: bool = True) -> dict:
-    files = collect_files_for_standard(std, scan_disk=scan_disk)
+def _standard_json(std: StandardInfo) -> dict:
+    files = collect_files_for_standard(std)
     return {
         "id": std.id,
         "std_id": std.std_id,
@@ -93,22 +93,22 @@ def _standard_json(std: StandardInfo, *, scan_disk: bool = True) -> dict:
                 "file_size": f.get("file_size"),
                 "exists": bool(f.get("exists")),
                 "source": f.get("source", "db"),
-                "disk_index": f.get("disk_index"),
             }
             for f in files
         ],
     }
 
 
-def _enrich_items(items: list[dict], *, scan_disk: bool = True) -> list[dict]:
+def _enrich_items(items: list[dict]) -> list[dict]:
     out: list[dict] = []
     for it in items:
         std = db.get_by_id(int(it["id"]))
         if not std:
             out.append(it)
             continue
-        full = _standard_json(std, scan_disk=scan_disk)
-        full["has_pdf"] = any(f.get("exists") for f in full.get("files", []))
+        full = _standard_json(std)
+        # 与列表 has_pdf 一致：存在与标准号（含年份）匹配的 PDF 记录即可
+        full["has_pdf"] = bool(full.get("files"))
         out.append(full)
     return out
 
@@ -120,7 +120,6 @@ def api_search():
         src = (request.args.get("source") or "").strip()
         page = max(1, int(request.args.get("page", 1)))
         per_page = min(50, max(1, int(request.args.get("per_page", 10))))
-        scan_disk = request.args.get("scan_disk", "0") != "0"
         pdf_only = request.args.get("pdf_only", "1") != "0"
         enrich = request.args.get("enrich", "0") == "1"
 
@@ -136,9 +135,7 @@ def api_search():
             if data.get("error"):
                 return jsonify({"ok": False, "error": data["error"]}), 400
             if enrich:
-                data["items"] = _enrich_items(
-                    data.get("items") or [], scan_disk=scan_disk
-                )
+                data["items"] = _enrich_items(data.get("items") or [])
             return jsonify({"ok": True, "query": q, **data})
 
         if src == "tuangbiao":
@@ -206,9 +203,7 @@ def api_search():
             data = db.search_page(q, page=page, per_page=per_page, pdf_only=pdf_only)
 
         if enrich:
-            data["items"] = _enrich_items(
-                data.get("items") or [], scan_disk=scan_disk
-            )
+            data["items"] = _enrich_items(data.get("items") or [])
         return jsonify({"ok": True, "query": q, "workflow": workflow, **data})
     except ValueError:
         return jsonify({"ok": False, "error": "请求参数无效"}), 400
@@ -286,7 +281,6 @@ def api_download_geo():
     filters = parse_advanced_filters(body)
     q = (body.get("q") or "").strip()
     pdf_only = body.get("pdf_only", True) in (True, 1, "1", "true")
-    scan_disk = body.get("scan_disk", True) in (True, 1, "1", "true")
     if not filters.province:
         return jsonify({"ok": False, "error": "请选择省份"}), 400
     if not geo_download_status()["ready"]:
@@ -302,9 +296,7 @@ def api_download_geo():
     if preview.get("total", 0) < 1:
         return jsonify({"ok": False, "error": "当前条件下未找到可下载标准", **preview}), 404
     try:
-        buf, summary = build_zip_from_geo(
-            filters, q=q, scan_disk=scan_disk, pdf_only=pdf_only
-        )
+        buf, summary = build_zip_from_geo(filters, q=q, pdf_only=pdf_only)
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
     if summary.get("success", 0) < 1:
@@ -333,7 +325,6 @@ def api_download_bulk():
     if not isinstance(ids, list) or not ids:
         return jsonify({"ok": False, "error": "请勾选要下载的条目"}), 400
     source = (data.get("source") or "search").strip().lower()
-    scan_disk = data.get("scan_disk") in (True, 1, "1", "true")
     try:
         if source == "tuangbiao":
             if not tuangbiao.is_ready():
@@ -346,7 +337,7 @@ def api_download_bulk():
             buf, summary = build_zip_from_catalog_ids(zhidu, ids)
             zip_label = "制度文件多项下载"
         else:
-            buf, summary = build_zip_from_base_ids(ids, scan_disk=scan_disk)
+            buf, summary = build_zip_from_base_ids(ids)
             zip_label = "标准PDF多项下载"
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
@@ -369,11 +360,10 @@ def api_download_bulk():
 
 @app.route("/api/std/<int:base_id>")
 def api_std_detail(base_id: int):
-    scan_disk = request.args.get("scan_disk", "1") != "0"
     std = db.get_by_id(base_id)
     if not std:
         return jsonify({"ok": False, "error": "未找到该标准"}), 404
-    return jsonify({"ok": True, "item": _standard_json(std, scan_disk=scan_disk)})
+    return jsonify({"ok": True, "item": _standard_json(std)})
 
 
 @app.route("/api/download/<int:file_id>")
@@ -382,29 +372,17 @@ def api_download_file(file_id: int):
     if not rec:
         return jsonify({"ok": False, "error": "文件记录不存在"}), 404
     std = db.get_by_id(rec["base_id"])
+    if std and not db_filepath_matches_std(
+        std.std_id or "", rec.get("file_name"), rec.get("file_path")
+    ):
+        return jsonify({"ok": False, "error": "该文件与当前标准版本不匹配"}), 404
     found = find_pdf_on_disk(
         rec.get("file_path") or "",
         rec.get("file_name") or "",
-        std_id=std.std_id if std else None,
     )
     if not found or not found.is_file():
         return jsonify({"ok": False, "error": "磁盘上未找到 PDF 文件"}), 404
     return send_file(found, as_attachment=True, download_name=found.name)
-
-
-@app.route("/api/download-std/<int:base_id>/<int:disk_index>")
-def api_download_std_disk(base_id: int, disk_index: int):
-    std = db.get_by_id(base_id)
-    if not std:
-        return jsonify({"ok": False, "error": "标准不存在"}), 404
-    files = collect_files_for_standard(std, scan_disk=True)
-    disk_files = [f for f in files if f.get("source") == "disk" and f.get("exists")]
-    if disk_index < 0 or disk_index >= len(disk_files):
-        return jsonify({"ok": False, "error": "磁盘文件索引无效"}), 404
-    path = Path(disk_files[disk_index]["resolved_path"])
-    if not path.is_file():
-        return jsonify({"ok": False, "error": "文件不存在"}), 404
-    return send_file(path, as_attachment=True, download_name=path.name)
 
 
 @app.route("/api/tuangbiao/<int:file_id>/download")
@@ -517,15 +495,13 @@ def api_batch_preview():
     items = body.get("items") or []
     if not items:
         return jsonify({"ok": False, "error": "无待预览条目"}), 400
-    scan_disk = body.get("scan_disk", False)
-    if not db.is_ready() and not scan_disk:
-        return jsonify({"ok": False, "error": "标准库未就绪，请先构建索引或勾选「扫描磁盘」"}), 503
-    return jsonify(preview_items(items, scan_disk=scan_disk))
+    if not db.is_ready():
+        return jsonify({"ok": False, "error": "标准库未就绪，请先构建索引"}), 503
+    return jsonify(preview_items(items))
 
 
 @app.route("/api/batch/download", methods=["POST"])
 def api_batch_download():
-    scan_disk = request.args.get("scan_disk", "1") != "0"
     items: list[dict] = []
     original_data: bytes | None = None
     original_filename: str | None = None
@@ -549,17 +525,15 @@ def api_batch_download():
     else:
         body = request.get_json(silent=True) or {}
         items = body.get("items") or []
-        scan_disk = body.get("scan_disk", scan_disk)
 
     if not items:
         return jsonify({"ok": False, "error": "无待下载条目"}), 400
 
-    if not db.is_ready() and not scan_disk:
-        return jsonify({"ok": False, "error": "标准库未就绪，请先运行 scripts/build_index.py 或勾选「扫描磁盘」"}), 503
+    if not db.is_ready():
+        return jsonify({"ok": False, "error": "标准库未就绪，请先运行 scripts/build_index.py"}), 503
 
     buf, summary = build_zip_archive(
         items,
-        scan_disk=scan_disk,
         original_data=original_data,
         original_filename=original_filename,
         parse_meta=parse_meta,

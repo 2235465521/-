@@ -11,12 +11,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.db import db
-from core.pdf_discovery import discover_pdfs_on_disk
 from core.pdf_service import collect_files_for_standard, pick_pdf_path
 from core.std_normalize import normalize_std_id
 
 MAX_ROWS = 400
-DISK_TIMEOUT = 12
 
 _STD_HEADER_KEYS = (
     "标准编号",
@@ -225,7 +223,7 @@ def parse_upload(filename: str, data: bytes) -> dict[str, Any]:
     return {"ok": True, "items": items, "meta": meta}
 
 
-def resolve_item(query: str, *, scan_disk: bool = True) -> dict[str, Any]:
+def resolve_item(query: str) -> dict[str, Any]:
     q = (query or "").strip()
     if not q:
         return {"status": "empty", "query": q, "message": "空行"}
@@ -239,30 +237,10 @@ def resolve_item(query: str, *, scan_disk: bool = True) -> dict[str, Any]:
         if hits and normalize_std_id(hits[0].std_id) == normalize_std_id(q):
             std = hits[0]
     if not std:
-        if scan_disk:
-            disk = discover_pdfs_on_disk(q, limit=1)
-            if disk:
-                pdf_path = disk[0]
-                return {
-                    "status": "ok",
-                    "query": q,
-                    "std_id": q,
-                    "std_chinesename": "",
-                    "base_id": None,
-                    "file_name": pdf_path.name,
-                    "zip_name": _safe_zip_name(q, pdf_path.name),
-                    "pdf_path": str(pdf_path),
-                    "file_size": pdf_path.stat().st_size,
-                    "source": "disk_only",
-                }
         return {"status": "not_found", "query": q, "message": "未找到匹配标准"}
 
-    files = collect_files_for_standard(std, scan_disk=scan_disk)
+    files = collect_files_for_standard(std)
     pdf_path = pick_pdf_path(std, files)
-    if not pdf_path and scan_disk:
-        disk = discover_pdfs_on_disk(std.std_id, limit=1)
-        if disk:
-            pdf_path = disk[0]
     if not pdf_path:
         return {
             "status": "no_pdf",
@@ -449,7 +427,6 @@ def build_template_xlsx() -> bytes:
 def build_zip_archive(
     items: list[dict],
     *,
-    scan_disk: bool = True,
     progress: Callable[[int, int], None] | None = None,
     original_data: bytes | None = None,
     original_filename: str | None = None,
@@ -467,7 +444,7 @@ def build_zip_archive(
                 progress(idx, total)
             query = (item.get("query") or "").strip()
             row_no = item.get("row") or idx
-            resolved = resolve_item(query, scan_disk=scan_disk)
+            resolved = resolve_item(query)
             resolved["row"] = row_no
             results.append(resolved)
             if resolved.get("status") != "ok":
@@ -535,7 +512,6 @@ def build_zip_from_geo(
     filters,
     *,
     q: str = "",
-    scan_disk: bool = True,
     pdf_only: bool = True,
 ) -> tuple[io.BytesIO, dict[str, Any]]:
     """按省/市/县等地域条件批量打包 ZIP（基于 mydate 起草单位关系）。"""
@@ -559,7 +535,7 @@ def build_zip_from_geo(
             continue
         items.append({"row": idx, "query": std.std_id.strip(), "base_id": bid})
 
-    buf, summary = build_zip_archive(items, scan_disk=scan_disk)
+    buf, summary = build_zip_archive(items)
     summary["region"] = filters.province
     if filters.city:
         summary["region"] = f"{filters.province}_{filters.city}"
@@ -569,8 +545,6 @@ def build_zip_from_geo(
 
 def build_zip_from_base_ids(
     base_ids: list[int],
-    *,
-    scan_disk: bool = True,
 ) -> tuple[io.BytesIO, dict[str, Any]]:
     """按标准库 base_id 列表打包 ZIP（检索结果多项下载）。"""
     unique: list[int] = []
@@ -595,16 +569,16 @@ def build_zip_from_base_ids(
             continue
         items.append({"row": idx, "query": std.std_id.strip(), "base_id": bid})
 
-    return build_zip_archive(items, scan_disk=scan_disk)
+    return build_zip_archive(items)
 
 
-def preview_items(items: list[dict], *, scan_disk: bool = False) -> dict[str, Any]:
+def preview_items(items: list[dict]) -> dict[str, Any]:
     rows: list[dict] = []
     for item in items[:MAX_ROWS]:
         q = (item.get("query") or "").strip()
         if not q:
             continue
-        resolved = resolve_item(q, scan_disk=scan_disk)
+        resolved = resolve_item(q)
         resolved["row"] = item.get("row")
         rows.append(resolved)
     ok = sum(1 for r in rows if r.get("status") == "ok")

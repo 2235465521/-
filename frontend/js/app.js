@@ -9,8 +9,6 @@
   const input = document.getElementById("query");
   const results = document.getElementById("results");
   const btnSearch = document.getElementById("btnSearch");
-  const historyWrap = document.getElementById("historyWrap");
-  const historyChips = document.getElementById("historyChips");
   const productBanner = document.getElementById("productBanner");
   const productClusterList = document.getElementById("productClusterList");
   const pageTitle = document.getElementById("pageTitle");
@@ -37,7 +35,6 @@
   };
 
   const PER_PAGE = 10;
-  const HISTORY_KEY = "pdf_search_history_v1";
   let searchController = null;
   let currentMode = "search";
   let currentPage = 1;
@@ -107,77 +104,6 @@
     return `${v.toFixed(i ? 1 : 0)} ${u[i]}`;
   }
 
-  function loadHistory() {
-    try {
-      return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-    } catch {
-      return [];
-    }
-  }
-
-  function saveHistory(q) {
-    const text = (q || "").trim();
-    if (!text) return;
-    let list = loadHistory().filter(x => x !== text);
-    list.unshift(text);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, 8)));
-    renderHistory();
-  }
-
-  function removeHistory(q) {
-    const text = (q || "").trim();
-    const list = loadHistory().filter(x => x !== text);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
-    renderHistory();
-  }
-
-  function clearHistory() {
-    localStorage.removeItem(HISTORY_KEY);
-    renderHistory();
-  }
-
-  function renderHistory() {
-    if (!historyWrap || !historyChips) return;
-    if (currentMode !== "search") {
-      historyWrap.classList.add("empty");
-      historyWrap.hidden = true;
-      return;
-    }
-    historyWrap.hidden = false;
-    const list = loadHistory();
-    const clearBtn = document.getElementById("btnHistoryClear");
-    if (!list.length) {
-      historyWrap.classList.add("empty");
-      historyChips.innerHTML = "";
-      if (clearBtn) clearBtn.hidden = true;
-      return;
-    }
-    historyWrap.classList.remove("empty");
-    if (clearBtn) clearBtn.hidden = false;
-    historyChips.innerHTML = list
-      .map(
-        q =>
-          `<button type="button" class="chip" data-q="${escapeHtml(q)}" title="点击再次检索">
-            <span class="chip-text">${escapeHtml(q)}</span>
-            <span class="chip-del" data-del="${escapeHtml(q)}" title="删除此记录" aria-label="删除">×</span>
-          </button>`
-      )
-      .join("");
-    historyChips.querySelectorAll(".chip").forEach(chip => {
-      chip.addEventListener("click", e => {
-        if (e.target.closest(".chip-del")) return;
-        if (input) input.value = chip.dataset.q || "";
-        doSearch(1);
-      });
-    });
-    historyChips.querySelectorAll(".chip-del").forEach(del => {
-      del.addEventListener("click", e => {
-        e.stopPropagation();
-        removeHistory(del.dataset.del || "");
-      });
-    });
-  }
-
   function setMode(mode) {
     if (mode !== currentMode) {
       persistModeQuery();
@@ -221,7 +147,6 @@
     const btnAdvanced = document.getElementById("btnAdvancedToggle");
     if (searchPanel) searchPanel.hidden = !searchLike && mode !== "batch";
     if (searchPanel && searchLike) searchPanel.hidden = false;
-    if (historyWrap) historyWrap.hidden = mode !== "search";
     if (results) results.hidden = mode === "batch";
     if (batchStage) batchStage.hidden = mode !== "batch";
     if (searchTools) {
@@ -235,10 +160,6 @@
       if (bulkBar) bulkBar.hidden = mode !== "search" && mode !== "product" && mode !== "tuangbiao";
     }
     window.WorkflowUI?.updateWorkflowUi?.();
-    const bulkScan = document.querySelector(".bulk-scan");
-    if (bulkScan) {
-      bulkScan.hidden = mode === "tuangbiao";
-    }
     if (btnAdvanced) {
       btnAdvanced.style.display = mode === "search" ? "" : "none";
     }
@@ -272,7 +193,6 @@
 
     if (mode === "batch" && batchStage) batchStage.style.display = "flex";
     window.AdvancedUI?.clearSelection?.();
-    renderHistory();
   }
 
   document.querySelectorAll("[data-mode-switch]").forEach(btn => {
@@ -312,7 +232,6 @@
     const files = (item.files || []).filter(f => f.exists);
     if (!files.length) return null;
     const f = files[0];
-    if (f.source === "disk") return `/api/download-std/${item.id}/${f.disk_index ?? 0}`;
     if (f.id) return `/api/download/${f.id}`;
     return null;
   }
@@ -347,32 +266,76 @@
     return "文件";
   }
 
+  function fileStdIdentityKey(filename) {
+    const stem = (filename || "").replace(/\.pdf$/i, "");
+    let token = stem
+      .split(/_[FTZX]_/i)[0]
+      .split(/[\u4e00-\u9fff]/)[0]
+      .replace(/\s+/g, "")
+      .replace(/[\/_]/g, "")
+      .replace(/[—－]/g, "-")
+      .toUpperCase()
+      .replace(/[.\-\s]+$/g, "");
+    let m =
+      token.match(/^([A-Z]{1,6})([TZX])([\d]+(?:\.\d+)*)(?:-(\d{2,4}))?$/i) ||
+      token.match(/^([A-Z]{1,6})([\d]+(?:\.\d+)*)(?:-(\d{2,4}))?$/i);
+    if (!m) return null;
+    let prefix;
+    let num;
+    let year;
+    if (m[2] && /^[TZX]$/i.test(m[2])) {
+      prefix = (m[1] + m[2]).toUpperCase();
+      num = m[3];
+      year = m[4] || "";
+    } else {
+      prefix = m[1].toUpperCase();
+      num = m[2];
+      year = m[3] || "";
+    }
+    if (year && year.length === 2) year = `20${year}`;
+    return year ? `${prefix}${num}-${year}` : `${prefix}${num}`;
+  }
+
+  function dedupeFilesPreferSmaller(list) {
+    const best = new Map();
+    for (const f of list || []) {
+      const name = f.file_name || "";
+      const identity = fileStdIdentityKey(name);
+      const key =
+        identity ||
+        [
+          (f.resolved_path || f.file_path || "").toLowerCase(),
+          name.toLowerCase(),
+        ].join("|");
+      const size = Number(f.file_size) || 0;
+      const prev = best.get(key);
+      if (!prev) {
+        best.set(key, f);
+        continue;
+      }
+      const prevSize = Number(prev.file_size) || 0;
+      const better =
+        (f.exists ? 1 : 0) - (prev.exists ? 1 : 0) ||
+        (size > 0 ? 1 : 0) - (prevSize > 0 ? 1 : 0) ||
+        (size > 0 && prevSize > 0 ? prevSize - size : 0) ||
+        ((f.id != null ? 1 : 0) - (prev.id != null ? 1 : 0));
+      if (better > 0) best.set(key, f);
+    }
+    return Array.from(best.values());
+  }
+
   function renderDetailHtml(item) {
     const catalogHref =
       currentMode === "tuangbiao" ? `/api/tuangbiao/${item.id}/download` : null;
-    const seen = new Set();
-    const files = (item.files || [])
-      .filter(f => {
-        const key = [
-          (f.resolved_path || f.file_path || "").toLowerCase(),
-          (f.file_name || "").toLowerCase(),
-        ].join("|");
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
+    const files = dedupeFilesPreferSmaller(item.files || [])
       .map(f => {
         const href =
           catalogHref ||
-          (f.source === "disk"
-            ? `/api/download-std/${item.id}/${f.disk_index ?? 0}`
-            : f.id
-              ? `/api/download/${f.id}`
-              : "#");
+          (f.id ? `/api/download/${f.id}` : "#");
         const icon = catalogHref ? fileExtIcon(f.file_ext) : "PDF";
         const meta = [
           f.file_size ? fmtSize(f.file_size) : "",
-          f.source === "disk" ? "磁盘扫描" : f.source === "catalog" ? "目录索引" : "",
+          f.source === "catalog" ? "目录索引" : "",
           !f.exists ? "磁盘未找到" : "",
         ]
           .filter(Boolean)
@@ -396,12 +359,8 @@
     return `
       <div class="pdf-block">
         <h3>${blockTitle}</h3>
-        ${files || '<div class="file-meta">暂无文件记录</div>'}
+        ${files || '<div class="file-meta">暂无匹配该版本的 PDF 文件</div>'}
       </div>`;
-  }
-
-  function scanDiskEnabled() {
-    return document.getElementById("advScanDisk")?.checked !== false;
   }
 
   async function loadRowDetail(id, detailRow) {
@@ -415,8 +374,7 @@
     }
     cell.innerHTML = '<div class="loading"><div class="spinner"></div>正在加载 PDF 详情…</div>';
     try {
-      const scan = scanDiskEnabled();
-      const res = await fetch(`/api/std/${id}?scan_disk=${scan ? "1" : "0"}`);
+      const res = await fetch(`/api/std/${id}`);
       const ct = res.headers.get("content-type") || "";
       if (!ct.includes("application/json")) {
         throw new Error(`详情加载失败（HTTP ${res.status}）`);
@@ -579,19 +537,12 @@
 
   async function doSearch(page) {
     const q = (input?.value || "").trim();
-    const workflow = window.WorkflowUI?.getWorkflow?.() || "search_first";
     const advActive = currentMode === "search" && window.AdvancedUI?.hasActiveFilters?.();
+    const workflow =
+      currentMode === "search"
+        ? window.WorkflowUI?.resolveWorkflow?.({ q, hasFilters: advActive }) || "combined"
+        : "combined";
 
-    if (currentMode === "search" && workflow === "filter_first" && !advActive) {
-      results.innerHTML =
-        '<div class="alert">「先筛选后查询」：请先打开高级选项，设置条件并点击「应用筛选」</div>';
-      return;
-    }
-    if (currentMode === "search" && workflow === "search_first" && !q) {
-      results.innerHTML =
-        '<div class="alert">「先查询后筛选」：请先输入标准编号或名称关键词</div>';
-      return;
-    }
     if (!q && !advActive) {
       const hints = {
         tuangbiao: "请输入团标名称或协会名关键词",
@@ -619,7 +570,6 @@
     params.set("page", String(currentPage));
     params.set("per_page", String(PER_PAGE));
     params.set("enrich", "0");
-    params.set("scan_disk", scanDiskEnabled() ? "1" : "0");
     if (currentMode === "product") {
       params.set("source", "product");
     } else if (isCatalogMode(currentMode)) {
@@ -653,7 +603,6 @@
         results.innerHTML = `<div class="alert">${escapeHtml(data.error || "检索失败")}</div>`;
         return;
       }
-      if (currentMode === "search" && q) saveHistory(q);
       renderItems(data);
     } catch (e) {
       if (isAbortError(e)) {
@@ -729,12 +678,6 @@
     }
   }
 
-  document.getElementById("btnHistoryClear")?.addEventListener("click", () => {
-    if (!loadHistory().length) return;
-    if (confirm("确定清空全部最近检索记录？")) clearHistory();
-  });
-
-  renderHistory();
   loadProductClusters();
   loadHealth();
   setMode("search");

@@ -5,7 +5,6 @@
   const btnBatchParse = el("btnBatchParse");
   const btnBatchPreview = el("btnBatchPreview");
   const btnBatchDownload = el("btnBatchDownload");
-  const batchScanDisk = el("batchScanDisk");
   const batchMeta = el("batchMeta");
   const batchTableWrap = el("batchTableWrap");
   const batchTableSection = el("batchTableSection");
@@ -167,7 +166,6 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: parsedItems,
-          scan_disk: batchScanDisk?.checked !== false,
         }),
       });
       const data = await res.json();
@@ -204,13 +202,12 @@
       return;
     }
     setBusy(true);
-    setFeedback('<div class="loading"><div class="spinner"></div>正在检索 E 盘 PDF 并打包，请稍候…</div>');
+    setFeedback('<div class="loading"><div class="spinner"></div>正在按库内路径检索 PDF 并打包，请稍候…</div>');
     try {
-      const scan = batchScanDisk?.checked !== false;
       const fd = new FormData();
       fd.append("file", file);
       fd.append("items", JSON.stringify(parsedItems));
-      const res = await fetch(`/api/batch/download?scan_disk=${scan ? "1" : "0"}`, {
+      const res = await fetch("/api/batch/download", {
         method: "POST",
         body: fd,
       });
@@ -321,7 +318,7 @@
     .then(info => {
       if (!info.db_ready) {
         setFeedback(
-          '<div class="alert">标准库未就绪。请先运行 <code>python scripts/build_index.py</code> 构建索引；或勾选「扫描磁盘」仅按文件名查找 PDF。</div>'
+          '<div class="alert">标准库未就绪。请先运行 <code>python scripts/build_index.py</code> 构建索引，或配置 MySQL。</div>'
         );
       } else if (!info.pdf_root_exists) {
         setFeedback(

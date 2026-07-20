@@ -18,6 +18,24 @@ from settings import (
 _AREA_CACHE: list[dict] | None = None
 
 
+def _area_sort_key(code: str | None) -> tuple:
+    """按国家标准行政区划代码排序（如 110000 北京 → 370000 山东）。"""
+    s = str(code or "").strip()
+    if s.isdigit():
+        return (0, int(s))
+    return (1, s)
+
+
+def _best_area_code(current: str | None, candidate: str | None) -> str:
+    cur = str(current or "").strip()
+    new = str(candidate or "").strip()
+    if not cur:
+        return new
+    if not new:
+        return cur
+    return new if _area_sort_key(new) < _area_sort_key(cur) else cur
+
+
 def _load_area_rows_mysql() -> list[dict]:
     if not MYSQL_PASSWORD:
         return []
@@ -37,7 +55,11 @@ def _load_area_rows_mysql() -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT area_code, province_name, city_name, county_name, level FROM area_dict"
+                """
+                SELECT area_code, province_name, city_name, county_name, level
+                FROM area_dict
+                ORDER BY area_code
+                """
             )
             return list(cur.fetchall() or [])
     except Exception:
@@ -56,7 +78,11 @@ def _load_area_rows() -> list[dict]:
         conn.row_factory = sqlite3.Row
         try:
             cur = conn.execute(
-                "SELECT area_code, province_name, city_name, county_name, level FROM area_dict"
+                """
+                SELECT area_code, province_name, city_name, county_name, level
+                FROM area_dict
+                ORDER BY area_code
+                """
             )
             rows = [dict(r) for r in cur.fetchall()]
         except sqlite3.Error:
@@ -78,6 +104,7 @@ def _load_area_rows() -> list[dict]:
                                 "level": rec[4],
                             }
                         )
+            rows.sort(key=lambda r: _area_sort_key(r.get("area_code")))
     if not rows:
         rows = _load_area_rows_mysql()
     _AREA_CACHE = rows
@@ -89,30 +116,28 @@ def is_ready() -> bool:
 
 
 def list_provinces() -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
+    best: dict[str, str] = {}
     for row in _load_area_rows():
         p = (row.get("province_name") or "").strip()
-        if p and p not in seen:
-            seen.add(p)
-            out.append(p)
-    return sorted(out)
+        if not p:
+            continue
+        best[p] = _best_area_code(best.get(p), row.get("area_code"))
+    return [name for name, _ in sorted(best.items(), key=lambda x: _area_sort_key(x[1]))]
 
 
 def list_cities(province: str) -> list[str]:
     province = (province or "").strip()
     if not province:
         return []
-    seen: set[str] = set()
-    out: list[str] = []
+    best: dict[str, str] = {}
     for row in _load_area_rows():
         if (row.get("province_name") or "").strip() != province:
             continue
         c = (row.get("city_name") or "").strip()
-        if c and c not in seen:
-            seen.add(c)
-            out.append(c)
-    return sorted(out)
+        if not c:
+            continue
+        best[c] = _best_area_code(best.get(c), row.get("area_code"))
+    return [name for name, _ in sorted(best.items(), key=lambda x: _area_sort_key(x[1]))]
 
 
 def list_counties(province: str, city: str) -> list[str]:
@@ -120,18 +145,17 @@ def list_counties(province: str, city: str) -> list[str]:
     city = (city or "").strip()
     if not province or not city:
         return []
-    seen: set[str] = set()
-    out: list[str] = []
+    best: dict[str, str] = {}
     for row in _load_area_rows():
         if (row.get("province_name") or "").strip() != province:
             continue
         if (row.get("city_name") or "").strip() != city:
             continue
         c = (row.get("county_name") or "").strip()
-        if c and c not in seen:
-            seen.add(c)
-            out.append(c)
-    return sorted(out)
+        if not c:
+            continue
+        best[c] = _best_area_code(best.get(c), row.get("area_code"))
+    return [name for name, _ in sorted(best.items(), key=lambda x: _area_sort_key(x[1]))]
 
 
 def suggest_companies(query: str, limit: int = 40) -> list[str]:

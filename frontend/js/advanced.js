@@ -24,148 +24,8 @@
   const selected = new Map();
   let lastPageIds = [];
   let filtersLoaded = false;
-  const ADV_FILTER_HISTORY_KEY = "pdf_adv_filter_history_v1";
-  const advFilterHistory = el("advFilterHistory");
-  const advHistoryChips = el("advHistoryChips");
   const CURRENT_YEAR = new Date().getFullYear();
   const YEAR_MIN = 1980;
-
-  function rankLabel(value) {
-    if (value === "1") return "第1位";
-    if (value === "2") return "第2位";
-    if (value === "3") return "第3位";
-    if (value === "gt3") return "大于三";
-    return "";
-  }
-
-  function snapshotFilters() {
-    return {
-      exState: fields.exState?.value || "",
-      stdType: fields.stdType?.value || "",
-      province: fields.province?.value || "",
-      city: fields.city?.value || "",
-      county: fields.county?.value || "",
-      product: fields.product?.value.trim() || "",
-      company: fields.company?.value.trim() || "",
-      unitRank: fields.unitRank?.value || "",
-      yearFrom: fields.yearFrom?.value || "",
-      yearTo: fields.yearTo?.value || "",
-      q: el("query")?.value.trim() || "",
-    };
-  }
-
-  function historyHasContent(snap) {
-    return Boolean(
-      snap.q ||
-        snap.company ||
-        snap.province ||
-        snap.product ||
-        snap.stdType ||
-        snap.exState ||
-        snap.yearFrom ||
-        snap.yearTo
-    );
-  }
-
-  function historyLabel(snap) {
-    const parts = [];
-    if (snap.q) parts.push(snap.q);
-    if (snap.company) {
-      let text = snap.company;
-      if (snap.unitRank) text += ` · ${rankLabel(snap.unitRank)}`;
-      parts.push(text);
-    }
-    const region = [snap.province, snap.city, snap.county].filter(Boolean).join("");
-    if (region) parts.push(region);
-    if (snap.product) parts.push(snap.product);
-    if (snap.stdType) parts.push(snap.stdType);
-    return parts.join(" / ") || "筛选条件";
-  }
-
-  function loadFilterHistory() {
-    try {
-      return JSON.parse(localStorage.getItem(ADV_FILTER_HISTORY_KEY) || "[]");
-    } catch {
-      return [];
-    }
-  }
-
-  function saveFilterHistory() {
-    const snap = snapshotFilters();
-    if (!historyHasContent(snap)) return;
-    const key = JSON.stringify(snap);
-    let list = loadFilterHistory().filter(item => JSON.stringify(item) !== key);
-    list.unshift(snap);
-    list = list.slice(0, 8);
-    localStorage.setItem(ADV_FILTER_HISTORY_KEY, JSON.stringify(list));
-    renderFilterHistory();
-  }
-
-  function renderFilterHistory() {
-    if (!advFilterHistory || !advHistoryChips) return;
-    const list = loadFilterHistory();
-    if (!list.length) {
-      advFilterHistory.hidden = true;
-      advHistoryChips.innerHTML = "";
-      return;
-    }
-    advFilterHistory.hidden = false;
-    advHistoryChips.innerHTML = list
-      .map(
-        (snap, i) =>
-          `<button type="button" class="chip adv-history-chip" data-idx="${i}" title="点击恢复此筛选">
-            <span class="chip-text">${escapeHtml(historyLabel(snap))}</span>
-            <span class="chip-del" data-del="${i}" aria-label="删除">×</span>
-          </button>`
-      )
-      .join("");
-    advHistoryChips.querySelectorAll(".adv-history-chip").forEach(btn => {
-      btn.addEventListener("click", e => {
-        if (e.target.closest(".chip-del")) return;
-        const idx = Number(btn.dataset.idx);
-        const snap = loadFilterHistory()[idx];
-        if (snap) applyFilterHistory(snap);
-      });
-    });
-    advHistoryChips.querySelectorAll(".chip-del").forEach(del => {
-      del.addEventListener("click", e => {
-        e.stopPropagation();
-        const idx = Number(del.dataset.del);
-        const list = loadFilterHistory();
-        list.splice(idx, 1);
-        localStorage.setItem(ADV_FILTER_HISTORY_KEY, JSON.stringify(list));
-        renderFilterHistory();
-      });
-    });
-  }
-
-  async function applyFilterHistory(snap) {
-    if (!snap) return;
-    if (fields.exState) fields.exState.value = snap.exState || "";
-    if (fields.stdType) fields.stdType.value = snap.stdType || "";
-    if (fields.product) fields.product.value = snap.product || "";
-    if (fields.company) fields.company.value = snap.company || "";
-    if (fields.unitRank) fields.unitRank.value = snap.unitRank || "";
-    if (fields.yearFrom) fields.yearFrom.value = snap.yearFrom || "";
-    if (fields.yearTo) fields.yearTo.value = snap.yearTo || "";
-    if (fields.province) fields.province.value = "";
-    if (fields.city) fields.city.value = "";
-    if (fields.county) fields.county.value = "";
-    if (snap.province) {
-      if (!filtersLoaded) await loadFilters();
-      if (fields.province) fields.province.value = snap.province;
-      await loadFilters({ province: snap.province });
-      if (fields.city) fields.city.value = snap.city || "";
-      if (snap.city) await loadFilters({ province: snap.province, city: snap.city });
-      if (fields.county) fields.county.value = snap.county || "";
-    }
-    const qInput = el("query");
-    if (qInput) qInput.value = snap.q || "";
-    updateGeoBtn();
-    if (!validateRankFilter()) return;
-    saveFilterHistory();
-    window.dispatchEvent(new CustomEvent("advanced-search"));
-  }
 
   function escapeHtml(s) {
     const d = document.createElement("div");
@@ -209,6 +69,18 @@
     const from = Math.max(YEAR_MIN, to - span + 1);
     if (fields.yearFrom) fields.yearFrom.value = String(from);
     if (fields.yearTo) fields.yearTo.value = String(to);
+    document.querySelectorAll(".year-preset").forEach(btn => {
+      btn.classList.toggle("is-active", Number(btn.dataset.years) === span);
+    });
+  }
+
+  function triggerAdvancedSearch() {
+    if (!validateRankFilter()) return;
+    if (typeof window.AppUI?.doSearch === "function") {
+      window.AppUI.doSearch(1);
+      return;
+    }
+    window.dispatchEvent(new CustomEvent("advanced-search"));
   }
 
   function syncYearRange() {
@@ -227,17 +99,21 @@
   function buildProductItems(products, suggestions) {
     const seen = new Set();
     const items = [];
-    const add = (value, label) => {
+    const add = (value, label, kind) => {
       const v = String(value || "").trim();
       if (!v || seen.has(v)) return;
       seen.add(v);
-      items.push({ value: v, label: label && label !== v ? label : "" });
+      items.push({
+        value: v,
+        label: label && label !== v ? label : "",
+        kind: kind || "product",
+      });
     };
     (products || []).forEach(p => {
-      add(p.name, p.name);
-      (p.keywords || []).forEach(kw => add(kw, `${p.name} · ${kw}`));
+      add(p.name, "产品大类", "category");
+      (p.keywords || []).forEach(kw => add(kw, `${p.name} · ${kw}`, "product"));
     });
-    (suggestions || []).forEach(s => add(s, s));
+    (suggestions || []).forEach(s => add(s, s, "product"));
     return items;
   }
 
@@ -248,14 +124,21 @@
 
   function filterProductItems(query) {
     const q = String(query || "").trim().toLowerCase();
-    if (!q) return productSuggestItems.slice(0, 48);
-    return productSuggestItems
-      .filter(
-        it =>
-          it.value.toLowerCase().includes(q) ||
-          (it.label && it.label.toLowerCase().includes(q))
-      )
-      .slice(0, 48);
+    // 空输入：只列产品大类，便于浏览完整目录
+    if (!q) {
+      return productSuggestItems.filter(it => it.kind === "category");
+    }
+    const categories = [];
+    const products = [];
+    for (const it of productSuggestItems) {
+      const hit =
+        it.value.toLowerCase().includes(q) ||
+        (it.label && it.label.toLowerCase().includes(q));
+      if (!hit) continue;
+      if (it.kind === "category") categories.push(it);
+      else products.push(it);
+    }
+    return [...categories, ...products].slice(0, 100);
   }
 
   function renderProductPanel(query) {
@@ -265,15 +148,22 @@
       hideProductPanel();
       return;
     }
-    productPanel.innerHTML = items
-      .map((it, i) => {
-        const hint = it.label
-          ? `<span class="adv-combo-hint">${escapeHtml(it.label)}</span>`
-          : "";
-        const active = i === productActiveIdx ? " active" : "";
-        return `<button type="button" class="adv-combo-item${active}" role="option" data-value="${escapeHtml(it.value)}">${escapeHtml(it.value)}${hint}</button>`;
-      })
-      .join("");
+    const q = String(query || "").trim();
+    const head = q
+      ? ""
+      : `<div class="adv-combo-group-title">产品大类（共 ${items.length} 类，输入可筛选具体产品）</div>`;
+    productPanel.innerHTML =
+      head +
+      items
+        .map((it, i) => {
+          const hint = it.label
+            ? `<span class="adv-combo-hint">${escapeHtml(it.label)}</span>`
+            : "";
+          const active = i === productActiveIdx ? " active" : "";
+          const kindClass = it.kind === "category" ? " is-category" : "";
+          return `<button type="button" class="adv-combo-item${kindClass}${active}" role="option" data-value="${escapeHtml(it.value)}">${escapeHtml(it.value)}${hint}</button>`;
+        })
+        .join("");
     productPanel.hidden = false;
     productComboOpen = true;
   }
@@ -630,7 +520,6 @@
     if (fields.yearFrom?.value) body.year_from = fields.yearFrom.value;
     if (fields.yearTo?.value) body.year_to = fields.yearTo.value;
     body.pdf_only = true;
-    body.scan_disk = el("advScanDisk")?.checked !== false;
     const q = el("query")?.value?.trim();
     if (q) body.q = q;
     return body;
@@ -768,7 +657,6 @@
     if (!selected.size) return;
     const mode = window.AppUI?.getMode?.() || "search";
     const isCatalog = mode === "tuangbiao";
-    const scan = el("advScanDisk")?.checked !== false;
     if (btnBulk) {
       btnBulk.disabled = true;
       btnBulk.textContent = "打包中…";
@@ -776,7 +664,6 @@
     try {
       const body = { ids: [...selected.keys()] };
       if (isCatalog) body.source = mode;
-      else body.scan_disk = scan;
       const res = await fetch("/api/download/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -826,6 +713,9 @@
     hideProductPanel();
     hideCompanyPanel();
     updateGeoBtn();
+    if (!(el("query")?.value || "").trim()) {
+      window.WorkflowUI?.resetPath?.();
+    }
   }
 
   if (btnToggle && panel) {
@@ -860,22 +750,24 @@
   }
 
   el("btnAdvancedApply")?.addEventListener("click", () => {
-    if (!validateRankFilter()) return;
-    saveFilterHistory();
-    window.dispatchEvent(new CustomEvent("advanced-search"));
+    triggerAdvancedSearch();
   });
-  el("btnAdvancedReset")?.addEventListener("click", resetFilters);
+  el("btnAdvancedReset")?.addEventListener("click", () => {
+    resetFilters();
+    document.querySelectorAll(".year-preset").forEach(btn => {
+      btn.classList.remove("is-active");
+    });
+  });
 
   fields.unitRank?.addEventListener("change", () => {
     if (!fields.company?.value.trim()) return;
     if (!validateRankFilter()) return;
-    window.dispatchEvent(new CustomEvent("advanced-search"));
+    triggerAdvancedSearch();
   });
 
   initYearSelects();
   initProductCombo();
   initCompanyCombo();
-  renderFilterHistory();
   fields.yearFrom?.addEventListener("change", syncYearRange);
   fields.yearTo?.addEventListener("change", syncYearRange);
   document.querySelectorAll(".year-preset").forEach(btn => {
