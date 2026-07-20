@@ -205,17 +205,29 @@ def build_advanced_where(
             args.extend([f"%{kw}%" for kw in kws])
 
     if filters.year_from is not None:
-        clauses.append(
-            f"(CAST(substr(b.release_date, 1, 4) AS INTEGER) >= {param} "
-            f"OR CAST(substr(b.std_id, -4) AS INTEGER) >= {param})"
-        )
+        if param == "%s":
+            clauses.append(
+                f"(CAST(SUBSTRING(b.release_date, 1, 4) AS SIGNED) >= {param} "
+                f"OR CAST(SUBSTRING(b.std_id, -4) AS SIGNED) >= {param})"
+            )
+        else:
+            clauses.append(
+                f"(CAST(substr(b.release_date, 1, 4) AS INTEGER) >= {param} "
+                f"OR CAST(substr(b.std_id, -4) AS INTEGER) >= {param})"
+            )
         args.extend([filters.year_from, filters.year_from])
 
     if filters.year_to is not None:
-        clauses.append(
-            f"(CAST(substr(b.release_date, 1, 4) AS INTEGER) <= {param} "
-            f"OR CAST(substr(b.std_id, -4) AS INTEGER) <= {param})"
-        )
+        if param == "%s":
+            clauses.append(
+                f"(CAST(SUBSTRING(b.release_date, 1, 4) AS SIGNED) <= {param} "
+                f"OR CAST(SUBSTRING(b.std_id, -4) AS SIGNED) <= {param})"
+            )
+        else:
+            clauses.append(
+                f"(CAST(substr(b.release_date, 1, 4) AS INTEGER) <= {param} "
+                f"OR CAST(substr(b.std_id, -4) AS INTEGER) <= {param})"
+            )
         args.extend([filters.year_to, filters.year_to])
 
     if std_folder and folder_sql:
