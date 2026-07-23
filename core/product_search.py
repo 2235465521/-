@@ -39,7 +39,7 @@ class ProductSearch:
         std_folder: str | None = None,
     ) -> dict:
         if not self.is_ready():
-            return {"error": "标准库未就绪，请先运行 python scripts/build_index.py"}
+            return {"error": "标准库未就绪：请配置 .env 中的 MySQL，并导入标准库备份后重启服务"}
         resolved = resolve_keywords(query)
         keywords = resolved.get("keywords") or []
         if not keywords:

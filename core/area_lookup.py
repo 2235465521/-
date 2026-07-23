@@ -1,12 +1,8 @@
-"""行政区划与单位名（用于高级筛选下拉）。"""
+"""行政区划与单位名（用于高级筛选下拉）— 仅 MySQL。"""
 from __future__ import annotations
-
-import sqlite3
 
 import pymysql
 
-from paths import SQL_DUMP_DIR, UNITS_DB_PATH
-from core.sql_parser import iter_insert_rows
 from settings import (
     MYSQL_DATABASE,
     MYSQL_HOST,
@@ -36,22 +32,29 @@ def _best_area_code(current: str | None, candidate: str | None) -> str:
     return new if _area_sort_key(new) < _area_sort_key(cur) else cur
 
 
-def _load_area_rows_mysql() -> list[dict]:
-    if not MYSQL_PASSWORD:
-        return []
+def _mysql_conn():
+    return pymysql.connect(
+        host=MYSQL_HOST,
+        port=MYSQL_PORT,
+        user=MYSQL_USER,
+        password=MYSQL_PASSWORD,
+        database=MYSQL_DATABASE,
+        charset="utf8mb4",
+        cursorclass=pymysql.cursors.DictCursor,
+        connect_timeout=3,
+    )
+
+
+def _load_area_rows() -> list[dict]:
+    global _AREA_CACHE
+    if _AREA_CACHE is not None:
+        return _AREA_CACHE
+    rows: list[dict] = []
     try:
-        conn = pymysql.connect(
-            host=MYSQL_HOST,
-            port=MYSQL_PORT,
-            user=MYSQL_USER,
-            password=MYSQL_PASSWORD,
-            database=MYSQL_DATABASE,
-            charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
-            connect_timeout=3,
-        )
+        conn = _mysql_conn()
     except Exception:
-        return []
+        _AREA_CACHE = []
+        return _AREA_CACHE
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -61,52 +64,11 @@ def _load_area_rows_mysql() -> list[dict]:
                 ORDER BY area_code
                 """
             )
-            return list(cur.fetchall() or [])
+            rows = list(cur.fetchall() or [])
     except Exception:
-        return []
+        rows = []
     finally:
         conn.close()
-
-
-def _load_area_rows() -> list[dict]:
-    global _AREA_CACHE
-    if _AREA_CACHE is not None:
-        return _AREA_CACHE
-    rows: list[dict] = []
-    if UNITS_DB_PATH.is_file():
-        conn = sqlite3.connect(UNITS_DB_PATH)
-        conn.row_factory = sqlite3.Row
-        try:
-            cur = conn.execute(
-                """
-                SELECT area_code, province_name, city_name, county_name, level
-                FROM area_dict
-                ORDER BY area_code
-                """
-            )
-            rows = [dict(r) for r in cur.fetchall()]
-        except sqlite3.Error:
-            rows = []
-        finally:
-            conn.close()
-    if not rows:
-        sql_path = SQL_DUMP_DIR / "mydate_area_dict.sql"
-        if sql_path.is_file():
-            with sql_path.open(encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    for rec in iter_insert_rows(line, "area_dict"):
-                        rows.append(
-                            {
-                                "area_code": rec[0],
-                                "province_name": rec[1],
-                                "city_name": rec[2],
-                                "county_name": rec[3],
-                                "level": rec[4],
-                            }
-                        )
-            rows.sort(key=lambda r: _area_sort_key(r.get("area_code")))
-    if not rows:
-        rows = _load_area_rows_mysql()
     _AREA_CACHE = rows
     return rows
 
@@ -160,26 +122,31 @@ def list_counties(province: str, city: str) -> list[str]:
 
 def suggest_companies(query: str, limit: int = 40) -> list[str]:
     q = (query or "").strip()
-    if len(q) < 2 or not UNITS_DB_PATH.is_file():
+    if len(q) < 2:
         return []
-    conn = sqlite3.connect(UNITS_DB_PATH)
     try:
-        rows = conn.execute(
-            """
-            SELECT DISTINCT unit_name FROM unit_dict
-            WHERE unit_name LIKE ?
-            ORDER BY
-              CASE WHEN unit_name LIKE ? THEN 0 ELSE 1 END,
-              length(unit_name),
-              unit_name
-            LIMIT ?
-            """,
-            (f"%{q}%", f"{q}%", max(limit * 2, limit)),
-        ).fetchall()
+        conn = _mysql_conn()
+    except Exception:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT unit_name FROM unit_dict
+                WHERE unit_name LIKE %s
+                ORDER BY
+                  CASE WHEN unit_name LIKE %s THEN 0 ELSE 1 END,
+                  CHAR_LENGTH(unit_name),
+                  unit_name
+                LIMIT %s
+                """,
+                (f"%{q}%", f"{q}%", max(limit * 2, limit)),
+            )
+            rows = cur.fetchall() or []
         seen: set[str] = set()
         out: list[str] = []
         for row in rows:
-            name = str(row[0]).strip()
+            name = str(row.get("unit_name") or "").strip()
             if not name:
                 continue
             key = name.rstrip("。，,;；.·")
@@ -190,7 +157,7 @@ def suggest_companies(query: str, limit: int = 40) -> list[str]:
             if len(out) >= limit:
                 break
         return out
-    except sqlite3.Error:
+    except Exception:
         return []
     finally:
         conn.close()

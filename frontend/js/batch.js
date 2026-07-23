@@ -318,7 +318,7 @@
     .then(info => {
       if (!info.db_ready) {
         setFeedback(
-          '<div class="alert">标准库未就绪。请先运行 <code>python scripts/build_index.py</code> 构建索引，或配置 MySQL。</div>'
+          '<div class="alert">标准库未就绪：请复制 <code>.env.example</code> 为 <code>.env</code>，填好 MySQL 并导入标准库后重启服务。详见 README。</div>'
         );
       } else if (!info.pdf_root_exists) {
         setFeedback(

@@ -229,7 +229,7 @@ def resolve_item(query: str) -> dict[str, Any]:
         return {"status": "empty", "query": q, "message": "空行"}
 
     if not db.is_ready():
-        return {"status": "error", "query": q, "message": "标准库未就绪，请先运行 scripts/build_index.py"}
+        return {"status": "error", "query": q, "message": "标准库未就绪，请配置 MySQL 连接"}
 
     std = db.search_std_id(q)
     if not std:

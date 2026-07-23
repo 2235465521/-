@@ -24,7 +24,7 @@ for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":5000" ^| findstr "LI
 )
 
 echo  检查运行依赖…
-%PY% -c "import flask, pymysql" >nul 2>&1
+%PY% -c "import flask, pymysql, dotenv" >nul 2>&1
 if errorlevel 1 (
     echo  首次或缺包，正在安装 requirements.txt …
     %PY% -m pip install -r requirements.txt
@@ -36,19 +36,35 @@ if errorlevel 1 (
     )
 )
 
-if not exist "data\standards.db" (
-    echo  [提示] 未找到 data\standards.db，标准检索可能不可用
-    echo         需要时可运行: python scripts\build_index.py
+echo  检查 / 准备 MySQL 标准库…
+%PY% scripts\setup_mysql.py
+set "SETUP_EC=%ERRORLEVEL%"
+if not "%SETUP_EC%"=="0" (
+    echo.
+    echo  [错误] 标准库未就绪（代码 %SETUP_EC%）
+    echo  ----------------------------------------
+    echo  请确认：
+    echo    1. 本机已安装并启动 MySQL
+    echo    2. .env 中 MYSQL_USER / MYSQL_PASSWORD 正确
+    echo    3. data\db_dump\ 下有 STSC_standard_database.sql.gz
+    echo       （若为空请执行: git lfs pull）
+    echo  无本机 MySQL 时可用 Docker：
+    echo    docker compose up -d mysql
+    echo    然后把 .env 设为 MYSQL_PASSWORD=zkbz 再重新运行本脚本
+    echo  ----------------------------------------
+    pause
+    exit /b %SETUP_EC%
 )
-if not exist "data\units.db" (
-    echo  [提示] 未找到 data\units.db，省/市/起草单位筛选可能不可用
-    echo         需要时可运行: python scripts\build_unit_index.py
+
+if not exist "data\product_clusters.json" (
+    echo  [提示] 未找到 data\product_clusters.json，同类产品扩展可能受限
 )
 
 echo.
 echo  ========================================
 echo    ZKBZ 标准PDF下载
 echo    地址: http://127.0.0.1:5000/
+echo    数据源: MySQL（项目内备份可自动导入）
 echo    启动后会自动打开浏览器
 echo    请勿关闭本窗口 - 关闭即停止服务
 echo  ========================================

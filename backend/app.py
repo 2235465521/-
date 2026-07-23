@@ -23,7 +23,6 @@ from core.batch_download import (  # noqa: E402
     parse_upload,
     preview_items,
 )
-from core.catalog_download import build_zip_from_catalog_ids  # noqa: E402
 from core.geo_download import count_geo_matches, geo_download_status  # noqa: E402
 from core.area_lookup import suggest_companies  # noqa: E402
 from core.db import StandardInfo, db  # noqa: E402
@@ -37,9 +36,7 @@ from core.search_filters import (  # noqa: E402
     validate_search_workflow,
 )
 from core.std_normalize import db_filepath_matches_std  # noqa: E402
-from paths import PDF_ROOT, PDF_SEARCH_ROOT, SQLITE_PATH, TUANGBIAO_DIR, ZHIDU_DIR  # noqa: E402
-from core.tuangbiao_catalog import tuangbiao  # noqa: E402
-from core.zhidu_catalog import zhidu  # noqa: E402
+from paths import PDF_ROOT, PDF_SEARCH_ROOT  # noqa: E402
 
 app = Flask(__name__, static_folder=None)
 
@@ -124,7 +121,7 @@ def api_search():
         enrich = request.args.get("enrich", "0") == "1"
 
         if not db.is_ready():
-            return jsonify({"ok": False, "error": "标准库未就绪，请先运行 scripts/build_index.py"}), 503
+            return jsonify({"ok": False, "error": "标准库未就绪：请配置 .env 中的 MySQL，并导入标准库备份后重启服务"}), 503
 
         if src == "product":
             if not q:
@@ -138,32 +135,6 @@ def api_search():
                 data["items"] = _enrich_items(data.get("items") or [])
             return jsonify({"ok": True, "query": q, **data})
 
-        if src == "tuangbiao":
-            if not q:
-                return jsonify({"ok": False, "error": "请输入团标名称或协会名关键词"}), 400
-            if not tuangbiao.is_ready():
-                return jsonify(
-                    {
-                        "ok": False,
-                        "error": "团标索引未就绪，请运行 scripts/build_tuangbiao_index.py",
-                    }
-                ), 503
-            data = tuangbiao.search_page(q, page=page, per_page=per_page)
-            return jsonify({"ok": True, "query": q, **data})
-
-        if src == "zhidu":
-            if not q:
-                return jsonify({"ok": False, "error": "请输入制度文件名称关键词"}), 400
-            if not zhidu.is_ready():
-                return jsonify(
-                    {
-                        "ok": False,
-                        "error": "制度索引未就绪，请运行 scripts/build_zhidu_index.py",
-                    }
-                ), 503
-            data = zhidu.search_page(q, page=page, per_page=per_page)
-            return jsonify({"ok": True, "query": q, **data})
-
         filters = parse_advanced_filters(request.args)
         workflow = parse_workflow(request.args.get("workflow"))
         wf_err = validate_search_workflow(workflow, q=q, filters=filters)
@@ -173,13 +144,13 @@ def api_search():
         if not q and not filters.active():
             return jsonify({"ok": False, "error": "请输入关键词或设置高级筛选条件"}), 400
 
-        from core.unit_geo import geo_index_ready, needs_geo_filter
+        from core.unit_geo import needs_geo_filter
 
-        if needs_geo_filter(filters) and not db._mysql_available() and not geo_index_ready():
+        if needs_geo_filter(filters) and not db._mysql_available():
             return jsonify(
                 {
                     "ok": False,
-                    "error": "省/市/县/起草单位筛选需 units 地址索引，请运行 scripts/build_unit_index.py 或配置 MySQL mydate",
+                    "error": "省/市/县/起草单位筛选需 MySQL 标准库（含 area_dict / unit_dict）",
                 }
             ), 503
 
@@ -267,7 +238,7 @@ def api_download_geo_preview():
         return jsonify(
             {
                 "ok": False,
-                "error": "地区批量下载未就绪，请配置 MySQL mydate 或运行 scripts/build_unit_index.py",
+                "error": "地区批量下载未就绪，请配置 MySQL 标准库",
             }
         ), 503
     payload = count_geo_matches(filters, q=q, pdf_only=pdf_only)
@@ -287,7 +258,7 @@ def api_download_geo():
         return jsonify(
             {
                 "ok": False,
-                "error": "地区批量下载未就绪，请配置 MySQL mydate 或运行 scripts/build_unit_index.py",
+                "error": "地区批量下载未就绪，请配置 MySQL 标准库",
             }
         ), 503
     preview = count_geo_matches(filters, q=q, pdf_only=pdf_only)
@@ -324,21 +295,9 @@ def api_download_bulk():
     ids = data.get("ids") or data.get("base_ids") or []
     if not isinstance(ids, list) or not ids:
         return jsonify({"ok": False, "error": "请勾选要下载的条目"}), 400
-    source = (data.get("source") or "search").strip().lower()
     try:
-        if source == "tuangbiao":
-            if not tuangbiao.is_ready():
-                return jsonify({"ok": False, "error": "团标索引未就绪"}), 503
-            buf, summary = build_zip_from_catalog_ids(tuangbiao, ids)
-            zip_label = "团标PDF多项下载"
-        elif source == "zhidu":
-            if not zhidu.is_ready():
-                return jsonify({"ok": False, "error": "制度索引未就绪"}), 503
-            buf, summary = build_zip_from_catalog_ids(zhidu, ids)
-            zip_label = "制度文件多项下载"
-        else:
-            buf, summary = build_zip_from_base_ids(ids)
-            zip_label = "标准PDF多项下载"
+        buf, summary = build_zip_from_base_ids(ids)
+        zip_label = "标准PDF多项下载"
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
     if summary.get("success", 0) < 1:
@@ -385,46 +344,6 @@ def api_download_file(file_id: int):
     return send_file(found, as_attachment=True, download_name=found.name)
 
 
-@app.route("/api/tuangbiao/<int:file_id>/download")
-def api_tuangbiao_download(file_id: int):
-    path = tuangbiao.resolve_path(file_id)
-    if not path:
-        return jsonify({"ok": False, "error": "文件不存在或索引已过期"}), 404
-    return send_file(path, as_attachment=True, download_name=path.name)
-
-
-@app.route("/api/zhidu/<int:file_id>/download")
-def api_zhidu_download(file_id: int):
-    path = zhidu.resolve_path(file_id)
-    if not path:
-        return jsonify({"ok": False, "error": "文件不存在或索引已过期"}), 404
-    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    return send_file(path, mimetype=mime, as_attachment=True, download_name=path.name)
-
-
-@app.route("/api/catalog/status")
-def api_catalog_status():
-    return jsonify(
-        {
-            "ok": True,
-            "tuangbiao": {
-                "dir": str(TUANGBIAO_DIR),
-                "dir_exists": tuangbiao.dir_exists(),
-                "ready": tuangbiao.is_ready(),
-                "indexed": tuangbiao.indexed_count(),
-                "describe": tuangbiao.describe(),
-            },
-            "zhidu": {
-                "dir": str(ZHIDU_DIR),
-                "dir_exists": zhidu.dir_exists(),
-                "ready": zhidu.is_ready(),
-                "indexed": zhidu.indexed_count(),
-                "describe": zhidu.describe(),
-            },
-        }
-    )
-
-
 @app.route("/")
 def index_page():
     return send_from_directory(_FRONTEND, "index.html")
@@ -449,16 +368,10 @@ def api_health():
             "db_ready": db.is_ready(),
             "db_backend": db.backend_name(),
             "geo_download": geo_download_status(),
-            "sqlite_path": str(SQLITE_PATH),
-            "sqlite_exists": SQLITE_PATH.is_file(),
             "pdf_root": str(PDF_ROOT),
             "pdf_root_exists": PDF_ROOT.is_dir(),
             "pdf_search_root": str(PDF_SEARCH_ROOT),
             "pdf_search_exists": PDF_SEARCH_ROOT.is_dir(),
-            "tuangbiao": tuangbiao.describe(),
-            "tuangbiao_ready": tuangbiao.is_ready(),
-            "zhidu": zhidu.describe(),
-            "zhidu_ready": zhidu.is_ready(),
         }
     )
 
@@ -496,7 +409,7 @@ def api_batch_preview():
     if not items:
         return jsonify({"ok": False, "error": "无待预览条目"}), 400
     if not db.is_ready():
-        return jsonify({"ok": False, "error": "标准库未就绪，请先构建索引"}), 503
+        return jsonify({"ok": False, "error": "标准库未就绪：请配置 .env 中的 MySQL，并导入标准库备份后重启服务"}), 503
     return jsonify(preview_items(items))
 
 
@@ -530,7 +443,7 @@ def api_batch_download():
         return jsonify({"ok": False, "error": "无待下载条目"}), 400
 
     if not db.is_ready():
-        return jsonify({"ok": False, "error": "标准库未就绪，请先运行 scripts/build_index.py"}), 503
+        return jsonify({"ok": False, "error": "标准库未就绪：请配置 .env 中的 MySQL，并导入标准库备份后重启服务"}), 503
 
     buf, summary = build_zip_archive(
         items,
@@ -560,7 +473,7 @@ def main() -> None:
     print(f"    浏览器打开: {url}")
     print(f"    数据库: {db.backend_name()}  PDF根目录: {PDF_ROOT}")
     if not db.is_ready():
-        print("    [提示] 标准库未就绪，请运行: python scripts/build_index.py")
+        print("    [提示] 标准库未就绪，请检查 .env 中的 MySQL 配置")
     if not PDF_ROOT.is_dir():
         print(f"    [提示] PDF 目录不存在，请检查 paths.py 或 .env 中的 PDF_ROOT")
     print("    请勿关闭本窗口")

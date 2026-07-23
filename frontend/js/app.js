@@ -24,10 +24,6 @@
       title: "同类产品",
       subtitle: "输入产品名称，自动扩展同类关键词并检索相关标准。",
     },
-    tuangbiao: {
-      title: "团标征求意见稿",
-      subtitle: "按协会名、标准名称检索团标 PDF 文件。",
-    },
     batch: {
       title: "Excel 批量下载",
       subtitle: "上传标准清单，自动匹配并打包 ZIP 下载。",
@@ -41,7 +37,6 @@
   const modeQueries = {
     search: "",
     product: "",
-    tuangbiao: "",
     batch: "",
   };
 
@@ -54,7 +49,7 @@
   }
 
   function isCatalogMode(mode) {
-    return mode === "tuangbiao";
+    return false;
   }
 
   function isSearchLikeMode(mode) {
@@ -113,12 +108,10 @@
     mainArea.classList.remove(
       "mode-search",
       "mode-batch",
-      "mode-product",
-      "mode-tuangbiao"
+      "mode-product"
     );
     if (mode === "batch") mainArea.classList.add("mode-batch");
     else if (mode === "product") mainArea.classList.add("mode-product");
-    else if (mode === "tuangbiao") mainArea.classList.add("mode-tuangbiao");
     else mainArea.classList.add("mode-search");
 
     document.querySelectorAll(".nav-group[data-mode]").forEach(g => {
@@ -152,12 +145,11 @@
     if (searchTools) {
       const showBulk =
         mode === "search" ||
-        mode === "product" ||
-        mode === "tuangbiao";
+        mode === "product";
       searchTools.hidden = !showBulk;
       searchTools.style.removeProperty("display");
       const bulkBar = searchTools.querySelector(".bulk-bar");
-      if (bulkBar) bulkBar.hidden = mode !== "search" && mode !== "product" && mode !== "tuangbiao";
+      if (bulkBar) bulkBar.hidden = mode !== "search" && mode !== "product";
     }
     window.WorkflowUI?.updateWorkflowUi?.();
     if (btnAdvanced) {
@@ -175,14 +167,12 @@
     if (input) {
       const placeholders = {
         product: "输入产品名，如：牙膏、牛奶、化妆品",
-        tuangbiao: "输入团标名称或协会名，如：餐饮、安徽省安全生产协会",
       };
       input.placeholder =
         placeholders[mode] || "标准编号或名称关键词，如 GB/T 1002-2024、煤矿";
     }
     const btnLabels = {
       product: "同类检索",
-      tuangbiao: "检索团标",
     };
     if (btnSearch && !btnSearch.classList.contains("is-cancel")) {
       btnSearch.textContent = btnLabels[mode] || "检索";
@@ -226,9 +216,6 @@
   }
 
   function firstDownloadHref(item) {
-    if (currentMode === "tuangbiao") {
-      return item.has_pdf || item.has_file ? `/api/tuangbiao/${item.id}/download` : null;
-    }
     const files = (item.files || []).filter(f => f.exists);
     if (!files.length) return null;
     const f = files[0];
@@ -325,17 +312,12 @@
   }
 
   function renderDetailHtml(item) {
-    const catalogHref =
-      currentMode === "tuangbiao" ? `/api/tuangbiao/${item.id}/download` : null;
     const files = dedupeFilesPreferSmaller(item.files || [])
       .map(f => {
-        const href =
-          catalogHref ||
-          (f.id ? `/api/download/${f.id}` : "#");
-        const icon = catalogHref ? fileExtIcon(f.file_ext) : "PDF";
+        const href = f.id ? `/api/download/${f.id}` : "#";
+        const icon = "PDF";
         const meta = [
           f.file_size ? fmtSize(f.file_size) : "",
-          f.source === "catalog" ? "目录索引" : "",
           !f.exists ? "磁盘未找到" : "",
         ]
           .filter(Boolean)
@@ -504,7 +486,6 @@
   function searchButtonLabel() {
     const btnLabels = {
       product: "同类检索",
-      tuangbiao: "检索团标",
     };
     return btnLabels[currentMode] || "检索";
   }
@@ -544,10 +525,7 @@
         : "combined";
 
     if (!q && !advActive) {
-      const hints = {
-        tuangbiao: "请输入团标名称或协会名关键词",
-      };
-      results.innerHTML = `<div class="alert">${escapeHtml(hints[currentMode] || "请输入关键词或设置高级筛选条件")}</div>`;
+      results.innerHTML = `<div class="alert">${escapeHtml("请输入关键词或设置高级筛选条件")}</div>`;
       return;
     }
     currentPage = page || 1;

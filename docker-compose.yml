@@ -1,0 +1,26 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: zkbz-mysql
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: zkbz
+      MYSQL_DATABASE: STSC_standard_database
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max_allowed_packet=512M
+    volumes:
+      - zkbz_mysql_data:/var/lib/mysql
+      # 首次启动时若数据卷为空，MySQL 会执行 /docker-entrypoint-initdb.d 下脚本
+      # 大备份请用 scripts/setup_mysql.py 导入（.gz 需本机 mysql 客户端）
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pzkbz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  zkbz_mysql_data:

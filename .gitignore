@@ -1,7 +1,8 @@
 # Environments
 .env
 .env.local
-.env.*
+.env.*.local
+!.env.example
 
 # Python Cache
 __pycache__/
@@ -9,7 +10,7 @@ __pycache__/
 *$py.class
 *.pyd
 
-# SQLite Databases & Cache (built dynamically via scripts)
+# Local SQLite leftovers (系统已改为仅 MySQL)
 data/*.db
 data/*.db-shm
 data/*.db-wal
@@ -27,3 +28,6 @@ data/pdf_files/
 *.sln
 *.swp
 .gitspec
+
+# Temp
+_tmp_*.py

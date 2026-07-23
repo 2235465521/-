@@ -207,35 +207,19 @@ def build_advanced_where(
             clauses.append(f"({or_parts})")
             args.extend([f"%{kw}%" for kw in kws])
 
-    # 年份：走 release_date 区间以利用 idx_release_date（无发布日期的记录不纳入年份筛选）
+    # 年份：走 release_date 区间以利用索引（无发布日期的记录不纳入年份筛选）
     if filters.year_from is not None or filters.year_to is not None:
         y_from = filters.year_from
         y_to = filters.year_to
-        if param == "%s":
-            if y_from is not None:
-                clauses.append(f"b.release_date >= {param}")
-                args.append(f"{y_from:04d}-01-01")
-            if y_to is not None:
-                clauses.append(f"b.release_date <= {param}")
-                args.append(f"{y_to:04d}-12-31")
-        else:
-            if y_from is not None:
-                clauses.append(
-                    f"(CAST(substr(b.release_date, 1, 4) AS INTEGER) >= {param} "
-                    f"OR CAST(substr(b.std_id, -4) AS INTEGER) >= {param})"
-                )
-                args.extend([y_from, y_from])
-            if y_to is not None:
-                clauses.append(
-                    f"(CAST(substr(b.release_date, 1, 4) AS INTEGER) <= {param} "
-                    f"OR CAST(substr(b.std_id, -4) AS INTEGER) <= {param})"
-                )
-                args.extend([y_to, y_to])
+        if y_from is not None:
+            clauses.append(f"b.release_date >= {param}")
+            args.append(f"{y_from:04d}-01-01")
+        if y_to is not None:
+            clauses.append(f"b.release_date <= {param}")
+            args.append(f"{y_to:04d}-12-31")
 
     if std_folder and folder_sql:
         fsql = folder_sql.lstrip(" AND ")
-        if param == "%s":
-            fsql = fsql.replace("?", "%s")
         clauses.append(fsql)
         args.extend(folder_args)
 

@@ -53,40 +53,6 @@ STD_RESERVED_SLOTS: list[str] = [
     "（预留）待扩展",
 ]
 
-# ---------- 团标征求意见稿 ----------
-_env_tuangbiao = os.getenv("TUANGBIAO_DIR", "").strip()
-if _env_tuangbiao:
-    TUANGBIAO_DIR = Path(_env_tuangbiao)
-else:
-    TUANGBIAO_DIR = PDF_ROOT / "团体标准" / "团标征求意见稿下载"
-
-# ---------- 制度文件根目录 ----------
-_env_zhidu = os.getenv("ZHIDU_DIR", "").strip()
-if _env_zhidu:
-    ZHIDU_ROOT = Path(_env_zhidu)
-else:
-    ZHIDU_ROOT = PDF_ROOT.parent / "制度文件"
-
-# 兼容旧名
-ZHIDU_DIR = ZHIDU_ROOT
-ZHIDU_RESERVED_SLOTS: list[str] = [
-    "（预留）新协会制度",
-    "（预留）地方制度",
-    "（预留）待扩展",
-]
-
-# ---------- 本地索引库路径 ----------
-SQLITE_PATH = DATA_DIR / "standards.db"
-CACHE_DB_PATH = DATA_DIR / "query_cache.db"
-TUANGBIAO_DB_PATH = DATA_DIR / "tuangbiao.db"
-ZHIDU_DB_PATH = DATA_DIR / "zhidu.db"
-UNITS_DB_PATH = DATA_DIR / "units.db"
-
-# ---------- SQL 导出（构建索引） ----------
-SQL_DUMP_DIR = Path(
-    os.getenv("SQL_DUMP_DIR", str(BASE_DIR / "data" / "sql_dump"))
-)
-
 # ---------- 产品同类词库 ----------
 PRODUCT_CLUSTERS_PATH = DATA_DIR / "product_clusters.json"
 

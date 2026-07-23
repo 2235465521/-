@@ -625,8 +625,7 @@
     if (searchMode === "batch") return;
     if (
       searchMode !== "search" &&
-      searchMode !== "product" &&
-      searchMode !== "tuangbiao"
+      searchMode !== "product"
     ) {
       return;
     }
@@ -655,15 +654,12 @@
 
   async function doBulkDownload() {
     if (!selected.size) return;
-    const mode = window.AppUI?.getMode?.() || "search";
-    const isCatalog = mode === "tuangbiao";
     if (btnBulk) {
       btnBulk.disabled = true;
       btnBulk.textContent = "打包中…";
     }
     try {
       const body = { ids: [...selected.keys()] };
-      if (isCatalog) body.source = mode;
       const res = await fetch("/api/download/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

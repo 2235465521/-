@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterator
 
 import pymysql
 
@@ -14,7 +12,6 @@ from config import (
     MYSQL_PASSWORD,
     MYSQL_PORT,
     MYSQL_USER,
-    SQLITE_PATH,
 )
 from core.std_normalize import db_filepath_matches_std
 
@@ -67,9 +64,6 @@ class Database:
     def _mysql_available(self) -> bool:
         if self._mysql_ok is not None:
             return self._mysql_ok
-        if not MYSQL_PASSWORD:
-            self._mysql_ok = False
-            return False
         try:
             conn = pymysql.connect(
                 host=MYSQL_HOST,
@@ -102,24 +96,11 @@ class Database:
         finally:
             conn.close()
 
-    @contextmanager
-    def _sqlite(self):
-        conn = sqlite3.connect(SQLITE_PATH)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-        finally:
-            conn.close()
-
     def backend_name(self) -> str:
-        if self._mysql_available():
-            return "MySQL"
-        if SQLITE_PATH.is_file():
-            return "SQLite"
-        return "未就绪"
+        return "MySQL" if self._mysql_available() else "未就绪"
 
     def is_ready(self) -> bool:
-        return self._mysql_available() or SQLITE_PATH.is_file()
+        return self._mysql_available()
 
     def _fetch_files_mysql(self, cur, base_id: int) -> list[dict]:
         cur.execute(
@@ -132,28 +113,11 @@ class Database:
         )
         return list(cur.fetchall())
 
-    def _fetch_files_sqlite(self, conn, base_id: int) -> list[dict]:
-        cur = conn.execute(
-            """
-            SELECT id, file_path, file_name, file_size
-            FROM std_filepath WHERE base_id = ?
-            ORDER BY file_name
-            """,
-            (base_id,),
-        )
-        return [dict(r) for r in cur.fetchall()]
-
     def search(self, query: str, limit: int = 20) -> list[StandardInfo]:
         q = query.strip()
-        if not q:
+        if not q or not self._mysql_available():
             return []
         norm = normalize_std_id(q)
-
-        if self._mysql_available():
-            return self._search_mysql(q, norm, limit)
-        return self._search_sqlite(q, norm, limit)
-
-    def _search_mysql(self, q: str, norm: str, limit: int) -> list[StandardInfo]:
         results: list[StandardInfo] = []
         seen: set[int] = set()
         with self._mysql() as conn:
@@ -184,112 +148,58 @@ class Database:
                         return results
         return results
 
-    def _search_sqlite(self, q: str, norm: str, limit: int) -> list[StandardInfo]:
-        if not SQLITE_PATH.is_file():
-            return []
-        results: list[StandardInfo] = []
-        seen: set[int] = set()
-        with self._sqlite() as conn:
-            for sql, params in (
-                ("SELECT * FROM std_base WHERE std_id = ? LIMIT ?", (q, limit)),
-                (
-                    "SELECT * FROM std_base WHERE std_id_norm = ? LIMIT ?",
-                    (norm, limit),
-                ),
-                (
-                    "SELECT * FROM std_base WHERE std_id LIKE ? LIMIT ?",
-                    (f"%{q}%", limit),
-                ),
-            ):
-                cur = conn.execute(sql, params)
-                for row in cur.fetchall():
-                    d = dict(row)
-                    bid = d["id"]
-                    if bid in seen:
-                        continue
-                    seen.add(bid)
-                    files = self._fetch_files_sqlite(conn, bid)
-                    results.append(_row_to_standard(d, files))
-                    if len(results) >= limit:
-                        return results
-        return results
-
     def get_by_id(self, base_id: int) -> StandardInfo | None:
-        if self._mysql_available():
-            with self._mysql() as conn:
-                cur = conn.cursor()
-                cur.execute("SELECT * FROM std_base WHERE id = %s", (base_id,))
-                row = cur.fetchone()
-                if not row:
-                    return None
-                files = self._fetch_files_mysql(cur, base_id)
-                return _row_to_standard(row, files)
-        if not SQLITE_PATH.is_file():
+        if not self._mysql_available():
             return None
-        with self._sqlite() as conn:
-            cur = conn.execute("SELECT * FROM std_base WHERE id = ?", (base_id,))
+        with self._mysql() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM std_base WHERE id = %s", (base_id,))
             row = cur.fetchone()
             if not row:
                 return None
-            files = self._fetch_files_sqlite(conn, base_id)
-            return _row_to_standard(dict(row), files)
+            files = self._fetch_files_mysql(cur, base_id)
+            return _row_to_standard(row, files)
 
     def get_filepath_record(self, file_id: int) -> dict | None:
-        if self._mysql_available():
-            with self._mysql() as conn:
-                cur = conn.cursor()
-                cur.execute(
-                    "SELECT id, base_id, file_path, file_name FROM std_filepath WHERE id = %s",
-                    (file_id,),
-                )
-                return cur.fetchone()
-        if not SQLITE_PATH.is_file():
+        if not self._mysql_available():
             return None
-        with self._sqlite() as conn:
-            cur = conn.execute(
-                "SELECT id, base_id, file_path, file_name FROM std_filepath WHERE id = ?",
+        with self._mysql() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, base_id, file_path, file_name FROM std_filepath WHERE id = %s",
                 (file_id,),
             )
-            row = cur.fetchone()
-            return dict(row) if row else None
+            return cur.fetchone()
 
     def search_std_id(self, query: str) -> StandardInfo | None:
         """仅按标准号精确/变体匹配（批量下载用，不用名称模糊）。"""
         q = (query or "").strip()
-        if not q:
+        if not q or not self._mysql_available():
             return None
         norm = normalize_std_id(q)
-        if not SQLITE_PATH.is_file():
-            return None
-        with self._sqlite() as conn:
-            cur = conn.execute(
-                "SELECT * FROM std_base WHERE std_id_norm = ? OR std_id = ? LIMIT 1",
+        with self._mysql() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT * FROM std_base
+                WHERE REPLACE(UPPER(std_id),' ','') = %s OR std_id = %s
+                LIMIT 1
+                """,
                 (norm, q),
             )
             row = cur.fetchone()
             if row:
-                d = dict(row)
-                files = self._fetch_files_sqlite(conn, d["id"])
-                return _row_to_standard(d, files)
-            cur = conn.execute(
-                "SELECT * FROM std_base WHERE std_id LIKE ? LIMIT 5",
+                files = self._fetch_files_mysql(cur, row["id"])
+                return _row_to_standard(row, files)
+            cur.execute(
+                "SELECT * FROM std_base WHERE std_id LIKE %s LIMIT 5",
                 (f"%{q.strip()}%",),
             )
             for row in cur.fetchall():
-                d = dict(row)
-                if normalize_std_id(d.get("std_id") or "") == norm:
-                    files = self._fetch_files_sqlite(conn, d["id"])
-                    return _row_to_standard(d, files)
+                if normalize_std_id(row.get("std_id") or "") == norm:
+                    files = self._fetch_files_mysql(cur, row["id"])
+                    return _row_to_standard(row, files)
         return None
-
-    def _has_pdf_sqlite(self, conn, base_id: int) -> bool:
-        files = self._fetch_files_sqlite(conn, base_id)
-        # 需配合调用方传入 std_id；单查兼容用 base 再取一次
-        row = conn.execute(
-            "SELECT std_id FROM std_base WHERE id = ?", (base_id,)
-        ).fetchone()
-        std_id = (dict(row).get("std_id") if row else "") or ""
-        return self._files_match_std(std_id, files)
 
     def _has_pdf_mysql(self, cur, base_id: int) -> bool:
         files = self._fetch_files_mysql(cur, base_id)
@@ -324,26 +234,6 @@ class Database:
             out.setdefault(bid, []).append(row)
         return out
 
-    def _fetch_files_by_ids_sqlite(self, conn, base_ids: list[int]) -> dict[int, list[dict]]:
-        out: dict[int, list[dict]] = {i: [] for i in base_ids}
-        if not base_ids:
-            return out
-        placeholders = ",".join(["?"] * len(base_ids))
-        cur = conn.execute(
-            f"""
-            SELECT id, base_id, file_path, file_name, file_size
-            FROM std_filepath
-            WHERE base_id IN ({placeholders})
-            ORDER BY file_name
-            """,
-            tuple(base_ids),
-        )
-        for row in cur.fetchall():
-            d = dict(row)
-            bid = int(d["base_id"])
-            out.setdefault(bid, []).append(d)
-        return out
-
     def _rows_to_lite_with_pdf(
         self, rows: list[dict], files_by_id: dict[int, list[dict]]
     ) -> list[dict]:
@@ -359,7 +249,7 @@ class Database:
         if not std_folder:
             return "", ()
         return (
-            " AND EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id AND f.file_path LIKE ?)",
+            " AND EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id AND f.file_path LIKE %s)",
             (f"%{std_folder}%",),
         )
 
@@ -379,39 +269,25 @@ class Database:
         }
 
     def list_std_types(self, limit: int = 80) -> list[str]:
+        if not self._mysql_available():
+            return []
         seen: set[str] = set()
         out: list[str] = []
-        if self._mysql_available():
-            with self._mysql() as conn:
-                cur = conn.cursor()
-                cur.execute(
-                    """
-                    SELECT DISTINCT std_type FROM std_base
-                    WHERE std_type IS NOT NULL AND std_type != ''
-                    ORDER BY std_type LIMIT %s
-                    """,
-                    (limit,),
-                )
-                for row in cur.fetchall():
-                    t = (row.get("std_type") or "").strip()
-                    if t and t not in seen:
-                        seen.add(t)
-                        out.append(t)
-        elif SQLITE_PATH.is_file():
-            with self._sqlite() as conn:
-                cur = conn.execute(
-                    """
-                    SELECT DISTINCT std_type FROM std_base
-                    WHERE std_type IS NOT NULL AND std_type != ''
-                    ORDER BY std_type LIMIT ?
-                    """,
-                    (limit,),
-                )
-                for row in cur.fetchall():
-                    t = (dict(row).get("std_type") or "").strip()
-                    if t and t not in seen:
-                        seen.add(t)
-                        out.append(t)
+        with self._mysql() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT DISTINCT std_type FROM std_base
+                WHERE std_type IS NOT NULL AND std_type != ''
+                ORDER BY std_type LIMIT %s
+                """,
+                (limit,),
+            )
+            for row in cur.fetchall():
+                t = (row.get("std_type") or "").strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    out.append(t)
         return out
 
     def search_page(
@@ -429,11 +305,11 @@ class Database:
         offset = (page - 1) * per_page
         if not q:
             return self._empty_page(page, per_page, "text")
-        if self._mysql_available():
-            return self._search_page_mysql(
-                q, page, per_page, offset, pdf_only, std_folder
-            )
-        return self._search_page_sqlite(q, page, per_page, offset, pdf_only, std_folder)
+        if not self._mysql_available():
+            return self._empty_page(page, per_page, "text")
+        return self._search_page_mysql(
+            q, page, per_page, offset, pdf_only, std_folder
+        )
 
     def _empty_page(self, page: int, per_page: int, mode: str) -> dict:
         return {
@@ -443,61 +319,6 @@ class Database:
             "total_pages": 0,
             "items": [],
             "search_mode": mode,
-        }
-
-    def _search_page_sqlite(
-        self,
-        q: str,
-        page: int,
-        per_page: int,
-        offset: int,
-        pdf_only: bool,
-        std_folder: str | None,
-    ) -> dict:
-        if not SQLITE_PATH.is_file():
-            return self._empty_page(page, per_page, "text")
-        pattern = f"%{q}%"
-        norm = normalize_std_id(q)
-        where_parts = [
-            "(b.std_id LIKE ? OR b.std_id_norm = ? OR b.std_chinesename LIKE ?)"
-        ]
-        args: list = [pattern, norm, pattern]
-        if pdf_only:
-            where_parts.append(
-                "EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
-            )
-        folder_sql, folder_args = self._folder_exists_sql(std_folder)
-        where = " AND ".join(where_parts) + folder_sql
-        args.extend(folder_args)
-        with self._sqlite() as conn:
-            cur = conn.execute(
-                f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {where}",
-                args,
-            )
-            total = int(cur.fetchone()[0])
-            cur = conn.execute(
-                f"""
-                SELECT DISTINCT b.* FROM std_base b
-                WHERE {where}
-                ORDER BY b.std_id
-                LIMIT ? OFFSET ?
-                """,
-                (*args, per_page, offset),
-            )
-            rows = [dict(r) for r in cur.fetchall()]
-            files_by_id = self._fetch_files_by_ids_sqlite(
-                conn, [int(r["id"]) for r in rows]
-            )
-            items = self._rows_to_lite_with_pdf(rows, files_by_id)
-        total_pages = (total + per_page - 1) // per_page if total else 0
-        return {
-            "total": total,
-            "page": page,
-            "per_page": per_page,
-            "total_pages": total_pages,
-            "items": items,
-            "search_mode": "text",
-            "pdf_only": pdf_only,
         }
 
     def _search_page_mysql(
@@ -513,9 +334,7 @@ class Database:
 
         pattern = f"%{q}%"
         norm = normalize_std_id(q)
-        # 纯中文词：只匹配名称；编号类：标准号精确/模糊 + 名称
         if _looks_like_file_keyword(q):
-            # 标准号优先前缀匹配（可走 uniq_std_id），再回退归一化精确匹配与名称模糊
             where_parts = [
                 "(b.std_id LIKE %s OR REPLACE(UPPER(b.std_id),' ','') = %s OR b.std_chinesename LIKE %s)"
             ]
@@ -528,8 +347,6 @@ class Database:
                 "EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
             )
         folder_sql, folder_args = self._folder_exists_sql(std_folder)
-        if folder_sql:
-            folder_sql = folder_sql.replace("?", "%s")
         where = " AND ".join(where_parts) + folder_sql
         args.extend(folder_args)
         with self._mysql() as conn:
@@ -560,7 +377,6 @@ class Database:
             "pdf_only": pdf_only,
         }
 
-    # 计数上限：避免对超大结果集做全表精确 COUNT（分页仍可用）
     _MYSQL_COUNT_CAP = 10001
 
     def _mysql_count_capped(self, cur, where: str, args: list) -> int:
@@ -586,7 +402,7 @@ class Database:
         std_folder: str | None = None,
         filters=None,
     ) -> dict:
-        from core.search_filters import AdvancedFilters, build_advanced_where
+        from core.search_filters import AdvancedFilters
 
         q = (query or "").strip()
         flt: AdvancedFilters = filters or AdvancedFilters()
@@ -595,77 +411,11 @@ class Database:
         page = max(1, page)
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
-        from core.unit_geo import geo_index_ready, needs_geo_filter
-
-        if self._mysql_available():
-            return self._search_page_advanced_mysql(
-                q, page, per_page, offset, pdf_only, std_folder, flt
-            )
-        if needs_geo_filter(flt) and geo_index_ready():
-            return self._search_page_advanced_sqlite(
-                q, page, per_page, offset, pdf_only, std_folder, flt
-            )
-        return self._search_page_advanced_sqlite(
+        if not self._mysql_available():
+            return self._empty_page(page, per_page, "advanced")
+        return self._search_page_advanced_mysql(
             q, page, per_page, offset, pdf_only, std_folder, flt
         )
-
-    def _search_page_advanced_sqlite(
-        self,
-        q: str,
-        page: int,
-        per_page: int,
-        offset: int,
-        pdf_only: bool,
-        std_folder: str | None,
-        filters,
-    ) -> dict:
-        from core.search_filters import build_advanced_where
-
-        if not SQLITE_PATH.is_file():
-            return self._empty_page(page, per_page, "advanced")
-        folder_sql, folder_args = self._folder_exists_sql(std_folder)
-        where_extra, args = build_advanced_where(
-            filters,
-            q,
-            pdf_only=pdf_only,
-            std_folder=std_folder,
-            folder_sql=folder_sql,
-            folder_args=tuple(folder_args),
-        )
-        base_where = "1=1" + where_extra
-        from core.unit_geo import attach_units_db
-
-        with self._sqlite() as conn:
-            attach_units_db(conn)
-            cur = conn.execute(
-                f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {base_where}",
-                args,
-            )
-            total = int(cur.fetchone()[0])
-            cur = conn.execute(
-                f"""
-                SELECT DISTINCT b.* FROM std_base b
-                WHERE {base_where}
-                ORDER BY b.std_id
-                LIMIT ? OFFSET ?
-                """,
-                (*args, per_page, offset),
-            )
-            rows = [dict(r) for r in cur.fetchall()]
-            files_by_id = self._fetch_files_by_ids_sqlite(
-                conn, [int(r["id"]) for r in rows]
-            )
-            items = self._rows_to_lite_with_pdf(rows, files_by_id)
-        total_pages = (total + per_page - 1) // per_page if total else 0
-        return {
-            "total": total,
-            "page": page,
-            "per_page": per_page,
-            "total_pages": total_pages,
-            "items": items,
-            "search_mode": "advanced",
-            "pdf_only": pdf_only,
-        }
 
     def _search_page_advanced_mysql(
         self,
@@ -685,7 +435,7 @@ class Database:
             q,
             pdf_only=pdf_only,
             std_folder=std_folder,
-            folder_sql=folder_sql.replace("?", "%s") if folder_sql else "",
+            folder_sql=folder_sql,
             folder_args=tuple(folder_args),
             param="%s",
         )
@@ -743,95 +493,30 @@ class Database:
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
         primary = (primary_keyword or kws[0]).strip()
-        if SQLITE_PATH.is_file():
-            return self._search_page_cluster_sqlite(
-                kws, primary, page, per_page, offset, pdf_only, std_folder
-            )
-        if self._mysql_available():
-            return self._search_page_cluster_mysql(
-                kws, primary, page, per_page, offset, pdf_only, std_folder
-            )
-        return self._search_page_cluster_sqlite(
+        if not self._mysql_available():
+            return self._empty_page(page, per_page, "product_cluster")
+        return self._search_page_cluster_mysql(
             kws, primary, page, per_page, offset, pdf_only, std_folder
         )
 
     def _cluster_score_sql(
-        self, keywords: list[str], primary: str, mysql: bool
+        self, keywords: list[str], primary: str
     ) -> tuple[str, list]:
-        ph = "%s" if mysql else "?"
         parts: list[str] = []
         args: list = []
         for kw in keywords:
             pat = f"%{kw}%"
             weight = 2 if kw == primary else 1
             parts.append(
-                f"(CASE WHEN b.std_chinesename LIKE {ph} THEN {weight} ELSE 0 END)"
+                f"(CASE WHEN b.std_chinesename LIKE %s THEN {weight} ELSE 0 END)"
             )
             args.append(pat)
         return " + ".join(parts) or "0", args
 
-    def _cluster_name_where_sql(
-        self, keywords: list[str], mysql: bool
-    ) -> tuple[str, list]:
-        ph = "%s" if mysql else "?"
-        parts = [f"b.std_chinesename LIKE {ph}" for _ in keywords]
+    def _cluster_name_where_sql(self, keywords: list[str]) -> tuple[str, list]:
+        parts = ["b.std_chinesename LIKE %s" for _ in keywords]
         args = [f"%{kw}%" for kw in keywords]
         return "(" + " OR ".join(parts) + ")", args
-
-    def _search_page_cluster_sqlite(
-        self,
-        keywords: list[str],
-        primary: str,
-        page: int,
-        per_page: int,
-        offset: int,
-        pdf_only: bool,
-        std_folder: str | None,
-    ) -> dict:
-        if not SQLITE_PATH.is_file():
-            return self._empty_page(page, per_page, "product_cluster")
-        score_sql, score_args = self._cluster_score_sql(keywords, primary, False)
-        where_sql, where_args = self._cluster_name_where_sql(keywords, False)
-        folder_sql, folder_args = self._folder_exists_sql(std_folder)
-        pdf_sql = (
-            " AND EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
-            if pdf_only
-            else ""
-        )
-        with self._sqlite() as conn:
-            count_sql = f"""
-                SELECT COUNT(DISTINCT b.id) AS c FROM std_base b
-                WHERE {where_sql}{pdf_sql}{folder_sql}
-            """
-            search_sql = f"""
-                SELECT DISTINCT b.*, ({score_sql}) AS match_score
-                FROM std_base b
-                WHERE {where_sql}{pdf_sql}{folder_sql}
-                ORDER BY match_score DESC, b.std_id
-                LIMIT ? OFFSET ?
-            """
-            count_args = where_args + list(folder_args)
-            cur = conn.execute(count_sql, count_args)
-            total = int(cur.fetchone()[0])
-            cur = conn.execute(
-                search_sql,
-                where_args + score_args + list(folder_args) + [per_page, offset],
-            )
-            rows = [dict(r) for r in cur.fetchall()]
-            files_by_id = self._fetch_files_by_ids_sqlite(
-                conn, [int(r["id"]) for r in rows]
-            )
-            items = self._rows_to_lite_with_pdf(rows, files_by_id)
-        total_pages = (total + per_page - 1) // per_page if total else 0
-        return {
-            "total": total,
-            "page": page,
-            "per_page": per_page,
-            "total_pages": total_pages,
-            "items": items,
-            "search_mode": "product_cluster",
-            "pdf_only": pdf_only,
-        }
 
     def _search_page_cluster_mysql(
         self,
@@ -843,11 +528,9 @@ class Database:
         pdf_only: bool,
         std_folder: str | None,
     ) -> dict:
-        score_sql, score_args = self._cluster_score_sql(keywords, primary, True)
-        where_sql, where_args = self._cluster_name_where_sql(keywords, True)
+        score_sql, score_args = self._cluster_score_sql(keywords, primary)
+        where_sql, where_args = self._cluster_name_where_sql(keywords)
         folder_sql, folder_args = self._folder_exists_sql(std_folder)
-        if folder_sql:
-            folder_sql = folder_sql.replace("?", "%s")
         pdf_sql = (
             " AND EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
             if pdf_only
