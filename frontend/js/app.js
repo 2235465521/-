@@ -607,6 +607,10 @@
         .join("");
       productClusterList.querySelectorAll(".cat-item").forEach(btn => {
         btn.addEventListener("click", () => {
+          productClusterList.querySelectorAll(".cat-item.active").forEach(el => {
+            el.classList.remove("active");
+          });
+          btn.classList.add("active");
           setMode("product");
           if (input) {
             input.value = btn.dataset.kw || "";

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -14,7 +14,30 @@ _FRONTEND = _ROOT / "frontend"
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from config import APP_VERSION, HOST, OPEN_BROWSER, PORT  # noqa: E402
+from config import (  # noqa: E402
+    ALLOW_REGISTER,
+    APP_VERSION,
+    HOST,
+    OPEN_BROWSER,
+    PORT,
+    SECRET_KEY,
+    SESSION_DAYS,
+)
+from core.auth import (  # noqa: E402
+    DEFAULT_USER_PASS,
+    DEFAULT_USER_USER,
+    authenticate,
+    create_user,
+    current_user,
+    ensure_auth_schema,
+    list_users,
+    login_user,
+    logout_user,
+    require_admin,
+    require_login,
+    update_user,
+    ROLE_USER,
+)
 from core.batch_download import (  # noqa: E402
     build_template_xlsx,
     build_zip_archive,
@@ -39,6 +62,40 @@ from core.std_normalize import db_filepath_matches_std  # noqa: E402
 from paths import PDF_ROOT, PDF_SEARCH_ROOT  # noqa: E402
 
 app = Flask(__name__, static_folder=None)
+app.secret_key = SECRET_KEY
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=timedelta(days=max(1, SESSION_DAYS)),
+)
+
+# 无需登录即可访问的 API
+_PUBLIC_API_PREFIXES = (
+    "/api/auth/login",
+    "/api/auth/logout",
+    "/api/auth/me",
+    "/api/auth/register",
+    "/api/meta/health",
+)
+
+
+@app.before_request
+def _require_api_login():
+    path = request.path or ""
+    if not path.startswith("/api/"):
+        return None
+    if any(path == p or path.startswith(p + "/") for p in _PUBLIC_API_PREFIXES):
+        return None
+    user = current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "请先登录", "code": "auth_required"}), 401
+    return None
+
+
+try:
+    ensure_auth_schema()
+except Exception as _auth_init_err:  # noqa: BLE001
+    print(f"  [警告] 用户表初始化失败: {_auth_init_err}")
 
 
 def _api_error(message: str, status: int = 500):
@@ -344,9 +401,145 @@ def api_download_file(file_id: int):
     return send_file(found, as_attachment=True, download_name=found.name)
 
 
+# ---------- 鉴权 ----------
+
+
+@app.route("/api/auth/me")
+def api_auth_me():
+    user = current_user()
+    return jsonify(
+        {
+            "ok": True,
+            "authenticated": bool(user),
+            "user": user.to_public() if user else None,
+            "allow_register": ALLOW_REGISTER,
+        }
+    )
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    body = request.get_json(silent=True) or {}
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+    if not username or not password:
+        return jsonify({"ok": False, "error": "请输入用户名和密码"}), 400
+    try:
+        user = authenticate(username, password)
+    except Exception as e:  # noqa: BLE001
+        return _api_error(f"登录失败：{e}"), 503
+    if not user:
+        return jsonify({"ok": False, "error": "用户名或密码错误，或账号已停用"}), 401
+    login_user(user)
+    return jsonify({"ok": True, "user": user.to_public()})
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_auth_logout():
+    logout_user()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/register", methods=["POST"])
+def api_auth_register():
+    if not ALLOW_REGISTER:
+        return jsonify({"ok": False, "error": "当前未开放自行注册"}), 403
+    body = request.get_json(silent=True) or {}
+    try:
+        user, err = create_user(
+            username=body.get("username") or "",
+            password=body.get("password") or "",
+            display_name=body.get("display_name") or "",
+            role=ROLE_USER,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _api_error(f"注册失败：{e}"), 503
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    login_user(user)
+    return jsonify({"ok": True, "user": user.to_public()})
+
+
+@app.route("/api/auth/change-password", methods=["POST"])
+@require_login
+def api_auth_change_password():
+    body = request.get_json(silent=True) or {}
+    old_password = body.get("old_password") or ""
+    new_password = body.get("new_password") or ""
+    user = current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "请先登录", "code": "auth_required"}), 401
+    check = authenticate(user.username, old_password)
+    if not check:
+        return jsonify({"ok": False, "error": "原密码不正确"}), 400
+    updated, err = update_user(user.id, password=new_password, actor_id=user.id)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "user": updated.to_public()})
+
+
+@app.route("/api/admin/users")
+@require_admin
+def api_admin_users():
+    q = (request.args.get("q") or "").strip()
+    page = max(1, int(request.args.get("page", 1)))
+    per_page = min(100, max(1, int(request.args.get("per_page", 20))))
+    try:
+        return jsonify(list_users(q=q, page=page, per_page=per_page))
+    except Exception as e:  # noqa: BLE001
+        return _api_error(f"查询用户失败：{e}")
+
+
+@app.route("/api/admin/users", methods=["POST"])
+@require_admin
+def api_admin_create_user():
+    body = request.get_json(silent=True) or {}
+    user, err = create_user(
+        username=body.get("username") or "",
+        password=body.get("password") or "",
+        display_name=body.get("display_name") or "",
+        role=body.get("role") or ROLE_USER,
+    )
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "user": user.to_public()})
+
+
+@app.route("/api/admin/users/<int:user_id>", methods=["PATCH"])
+@require_admin
+def api_admin_update_user(user_id: int):
+    body = request.get_json(silent=True) or {}
+    actor = current_user()
+    kwargs = {}
+    if "display_name" in body:
+        kwargs["display_name"] = body.get("display_name")
+    if "role" in body:
+        kwargs["role"] = body.get("role")
+    if "is_active" in body:
+        kwargs["is_active"] = bool(body.get("is_active"))
+    if body.get("password"):
+        kwargs["password"] = body.get("password")
+    updated, err = update_user(user_id, actor_id=actor.id if actor else None, **kwargs)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "user": updated.to_public()})
+
+
 @app.route("/")
 def index_page():
     return send_from_directory(_FRONTEND, "index.html")
+
+
+@app.route("/login")
+@app.route("/login.html")
+def login_page():
+    return send_from_directory(_FRONTEND, "login.html")
+
+
+@app.route("/admin")
+@app.route("/admin.html")
+def admin_page():
+    return send_from_directory(_FRONTEND, "admin.html")
 
 
 @app.route("/css/<path:filename>")
@@ -372,6 +565,7 @@ def api_health():
             "pdf_root_exists": PDF_ROOT.is_dir(),
             "pdf_search_root": str(PDF_SEARCH_ROOT),
             "pdf_search_exists": PDF_SEARCH_ROOT.is_dir(),
+            "allow_register": ALLOW_REGISTER,
         }
     )
 
@@ -466,12 +660,17 @@ def api_batch_download():
 def main() -> None:
     mimetypes.add_type("application/javascript", ".js")
     mimetypes.add_type("text/css", ".css")
-    url = f"http://127.0.0.1:{PORT}/"
+    try:
+        ensure_auth_schema()
+    except Exception as e:  # noqa: BLE001
+        print(f"  [警告] 用户表初始化失败: {e}")
+    url = f"http://127.0.0.1:{PORT}/login"
     print()
     print("  ========================================")
     print(f"    PDF 下载  v{APP_VERSION}")
     print(f"    浏览器打开: {url}")
     print(f"    数据库: {db.backend_name()}  PDF根目录: {PDF_ROOT}")
+    print(f"    默认普通用户: {DEFAULT_USER_USER} / {DEFAULT_USER_PASS}")
     if not db.is_ready():
         print("    [提示] 标准库未就绪，请检查 .env 中的 MySQL 配置")
     if not PDF_ROOT.is_dir():

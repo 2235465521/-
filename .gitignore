@@ -3,6 +3,7 @@
 .env.local
 .env.*.local
 !.env.example
+data/.flask_secret
 
 # Python Cache
 __pycache__/

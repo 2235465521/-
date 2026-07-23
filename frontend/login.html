@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>登录 · ZKBZ 标准PDF下载</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/login.css?v=1.2.0" />
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-panel">
+      <div class="login-brand">
+        <div class="login-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 3.5h7.2L19 8.3V20a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 6 20V5A1.5 1.5 0 0 1 7.5 3.5H7z"/>
+            <path d="M14 3.5V8h5"/>
+            <path d="M9 12h6M9 15.5h6"/>
+          </svg>
+        </div>
+        <div>
+          <h1>ZKBZ</h1>
+          <p>标准 PDF 下载平台</p>
+        </div>
+      </div>
+
+      <div class="login-tabs" role="tablist">
+        <button type="button" class="login-tab active" data-tab="login" id="tabLogin">登录</button>
+        <button type="button" class="login-tab" data-tab="register" id="tabRegister" hidden>注册</button>
+      </div>
+
+      <form id="loginForm" class="login-form" autocomplete="on">
+        <label>
+          <span>用户名</span>
+          <input type="text" name="username" id="loginUsername" required minlength="3" maxlength="64" placeholder="请输入用户名" />
+        </label>
+        <label>
+          <span>密码</span>
+          <input type="password" name="password" id="loginPassword" required minlength="6" placeholder="请输入密码" />
+        </label>
+        <button type="submit" class="login-submit" id="btnLogin">登录</button>
+      </form>
+
+      <form id="registerForm" class="login-form" hidden autocomplete="on">
+        <label>
+          <span>用户名</span>
+          <input type="text" name="username" id="regUsername" required minlength="3" maxlength="64" placeholder="3–64 个字符" />
+        </label>
+        <label>
+          <span>显示名称</span>
+          <input type="text" name="display_name" id="regDisplay" maxlength="128" placeholder="可选" />
+        </label>
+        <label>
+          <span>密码</span>
+          <input type="password" name="password" id="regPassword" required minlength="6" placeholder="至少 6 位" />
+        </label>
+        <button type="submit" class="login-submit" id="btnRegister">注册并登录</button>
+      </form>
+
+      <p class="login-error" id="loginError" hidden></p>
+      <p class="login-hint">默认普通用户 <code>user</code> / <code>user123</code></p>
+    </div>
+  </div>
+  <script src="js/auth.js?v=1.0.0"></script>
+  <script>
+    (async function () {
+      const params = new URLSearchParams(location.search);
+      const next = params.get("next") || "/";
+      const errEl = document.getElementById("loginError");
+      const tabLogin = document.getElementById("tabLogin");
+      const tabRegister = document.getElementById("tabRegister");
+      const loginForm = document.getElementById("loginForm");
+      const registerForm = document.getElementById("registerForm");
+
+      function showError(msg) {
+        errEl.hidden = !msg;
+        errEl.textContent = msg || "";
+      }
+
+      function switchTab(name) {
+        const isLogin = name === "login";
+        tabLogin.classList.toggle("active", isLogin);
+        tabRegister.classList.toggle("active", !isLogin);
+        loginForm.hidden = !isLogin;
+        registerForm.hidden = isLogin;
+        showError("");
+      }
+
+      try {
+        const data = await Auth.me();
+        if (data.authenticated) {
+          location.href = next.startsWith("/") ? next : "/";
+          return;
+        }
+        if (data.allow_register) {
+          tabRegister.hidden = false;
+        }
+      } catch (_) { /* ignore */ }
+
+      tabLogin.addEventListener("click", () => switchTab("login"));
+      tabRegister.addEventListener("click", () => switchTab("register"));
+
+      loginForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        showError("");
+        const btn = document.getElementById("btnLogin");
+        btn.disabled = true;
+        try {
+          const { data } = await Auth.login(
+            document.getElementById("loginUsername").value.trim(),
+            document.getElementById("loginPassword").value
+          );
+          if (!data.ok) {
+            showError(data.error || "登录失败");
+            return;
+          }
+          location.href = next.startsWith("/") ? next : "/";
+        } catch (err) {
+          showError("网络错误，请稍后重试");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      registerForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        showError("");
+        const btn = document.getElementById("btnRegister");
+        btn.disabled = true;
+        try {
+          const { data } = await Auth.register(
+            document.getElementById("regUsername").value.trim(),
+            document.getElementById("regPassword").value,
+            document.getElementById("regDisplay").value.trim()
+          );
+          if (!data.ok) {
+            showError(data.error || "注册失败");
+            return;
+          }
+          location.href = "/";
+        } catch (err) {
+          showError("网络错误，请稍后重试");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
