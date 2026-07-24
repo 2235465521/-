@@ -65,7 +65,8 @@ ES_PASSWORD = os.getenv("ES_PASSWORD", "")
 
 APP_VERSION = "3.0.0"
 
-# 智谱 AI（自然语言检索）
-ZHIPU_API_KEY = (os.getenv("ZHIPU_API_KEY") or "").strip()
+# 智谱 AI（自然语言检索）— 内置默认 Key，克隆即可用；可用 .env 覆盖
+_DEFAULT_ZHIPU_API_KEY = "5f344f0bbfdb478da80e14c8cb8bb74e.NREa621RhRCzEKIl"
+ZHIPU_API_KEY = (os.getenv("ZHIPU_API_KEY") or _DEFAULT_ZHIPU_API_KEY).strip()
 ZHIPU_API_BASE = os.getenv("ZHIPU_API_BASE", "https://open.bigmodel.cn/api/paas/v4").rstrip("/")
 ZHIPU_MODEL = os.getenv("ZHIPU_MODEL", "glm-4-flash")

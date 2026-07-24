@@ -173,7 +173,7 @@ def parse_natural_query(prompt: str) -> dict[str, Any]:
     if not text:
         raise ValueError("请输入自然语言检索需求")
     if not ai_configured():
-        raise RuntimeError("未配置 ZHIPU_API_KEY，请在 .env 中填写智谱 API Key")
+        raise RuntimeError("未配置智谱 API Key")
 
     url = f"{ZHIPU_API_BASE.rstrip('/')}/chat/completions"
     payload = {

@@ -48,33 +48,70 @@ def _log(msg: str) -> None:
 
 
 def ensure_env_file() -> None:
-    if ENV_PATH.is_file():
-        return
-    if ENV_EXAMPLE.is_file():
-        text = ENV_EXAMPLE.read_text(encoding="utf-8")
-        # 示例里的中文占位改为空密码，便于本机默认 root 无密码场景；有密码用户自行改
-        text = text.replace("MYSQL_PASSWORD=你的密码", "MYSQL_PASSWORD=")
-        ENV_PATH.write_text(text, encoding="utf-8")
-        _log(f"[setup] 已从 .env.example 生成 {ENV_PATH.name}，请按需修改密码")
-    else:
-        ENV_PATH.write_text(
-            "\n".join(
-                [
-                    "HOST=0.0.0.0",
-                    "PORT=5000",
-                    "OPEN_BROWSER=true",
-                    "MYSQL_HOST=127.0.0.1",
-                    "MYSQL_PORT=3306",
-                    "MYSQL_USER=root",
-                    "MYSQL_PASSWORD=",
-                    f"MYSQL_DATABASE={DEFAULT_DB}",
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
-        _log(f"[setup] 已创建默认 {ENV_PATH.name}")
+    if not ENV_PATH.is_file():
+        if ENV_EXAMPLE.is_file():
+            text = ENV_EXAMPLE.read_text(encoding="utf-8")
+            # 示例里的中文占位改为空密码，便于本机默认 root 无密码场景；有密码用户自行改
+            text = text.replace("MYSQL_PASSWORD=你的密码", "MYSQL_PASSWORD=")
+            ENV_PATH.write_text(text, encoding="utf-8")
+            _log(f"[setup] 已从 .env.example 生成 {ENV_PATH.name}，请按需修改密码")
+        else:
+            ENV_PATH.write_text(
+                "\n".join(
+                    [
+                        "HOST=0.0.0.0",
+                        "PORT=5000",
+                        "OPEN_BROWSER=true",
+                        "MYSQL_HOST=127.0.0.1",
+                        "MYSQL_PORT=3306",
+                        "MYSQL_USER=root",
+                        "MYSQL_PASSWORD=",
+                        f"MYSQL_DATABASE={DEFAULT_DB}",
+                        "ZHIPU_API_KEY=5f344f0bbfdb478da80e14c8cb8bb74e.NREa621RhRCzEKIl",
+                        "ZHIPU_MODEL=glm-4-flash",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            _log(f"[setup] 已创建默认 {ENV_PATH.name}")
+    # 已有 .env 但缺 AI Key 时，补上开箱默认项（不覆盖用户已写值）
+    _ensure_env_defaults(
+        {
+            "ZHIPU_API_KEY": "5f344f0bbfdb478da80e14c8cb8bb74e.NREa621RhRCzEKIl",
+            "ZHIPU_MODEL": "glm-4-flash",
+        }
+    )
 
+
+def _ensure_env_defaults(defaults: dict[str, str]) -> None:
+    if not ENV_PATH.is_file() or not defaults:
+        return
+    try:
+        text = ENV_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    existing: set[str] = set()
+    for line in lines:
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        key, _, val = s.partition("=")
+        key = key.strip()
+        if key and val.strip():
+            existing.add(key)
+    missing = [(k, v) for k, v in defaults.items() if k not in existing]
+    if not missing:
+        return
+    if lines and lines[-1] != "":
+        lines.append("")
+    lines.append("# 智谱 AI（启动时自动补全）")
+    for k, v in missing:
+        lines.append(f"{k}={v}")
+    lines.append("")
+    ENV_PATH.write_text("\n".join(lines), encoding="utf-8")
+    _log(f"[setup] 已向 {ENV_PATH.name} 补全 AI 检索默认配置")
 
 def find_mysql_exe() -> Path | None:
     env_exe = (os.getenv("MYSQL_EXE") or "").strip()
