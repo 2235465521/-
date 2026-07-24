@@ -788,6 +788,69 @@
 
   updateGeoBtn();
 
+  async function applyAiFilters(filters) {
+    const f = filters || {};
+    resetFilters();
+    document.querySelectorAll(".year-preset.is-active").forEach(b => b.classList.remove("is-active"));
+
+    const qInput = document.getElementById("query");
+    if (qInput) qInput.value = f.q || "";
+
+    // 先加载省列表，再按省刷市/县
+    await loadFilters({});
+    if (f.province && fields.province) {
+      // 模糊匹配省名
+      const provOpts = [...(fields.province.options || [])];
+      const hitProv =
+        provOpts.find(o => o.value === f.province) ||
+        provOpts.find(o => o.value && (o.value.includes(f.province) || f.province.includes(o.value)));
+      if (hitProv) fields.province.value = hitProv.value;
+      else fields.province.value = f.province;
+      await loadFilters({ province: fields.province.value });
+    }
+    if (f.city && fields.city) {
+      const cityOpts = [...(fields.city.options || [])];
+      const hitCity =
+        cityOpts.find(o => o.value === f.city) ||
+        cityOpts.find(o => o.value && (o.value.includes(f.city) || f.city.includes(o.value)));
+      if (hitCity) fields.city.value = hitCity.value;
+      if (fields.city.value) {
+        await loadFilters({
+          province: fields.province?.value || f.province,
+          city: fields.city.value,
+        });
+      }
+    }
+    if (f.county && fields.county) {
+      const countyOpts = [...(fields.county.options || [])];
+      const hit =
+        countyOpts.find(o => o.value === f.county) ||
+        countyOpts.find(o => o.value && (o.value.includes(f.county) || f.county.includes(o.value)));
+      if (hit) fields.county.value = hit.value;
+    }
+
+    if (f.ex_state != null && fields.exState) fields.exState.value = String(f.ex_state);
+    if (f.std_type && fields.stdType) {
+      const opts = [...(fields.stdType.options || [])];
+      const hit =
+        opts.find(o => o.value === f.std_type) ||
+        opts.find(o => o.value && (o.value.includes(f.std_type) || f.std_type.includes(o.value)));
+      if (hit) fields.stdType.value = hit.value;
+      else fields.stdType.value = f.std_type;
+    }
+    if (f.product && fields.product) fields.product.value = f.product;
+    if (f.company && fields.company) fields.company.value = f.company;
+    if (f.unit_rank && fields.unitRank) fields.unitRank.value = String(f.unit_rank);
+    if (f.year_from && fields.yearFrom) fields.yearFrom.value = String(f.year_from);
+    if (f.year_to && fields.yearTo) fields.yearTo.value = String(f.year_to);
+
+    if (hasActiveFilters() && panel) {
+      panel.hidden = false;
+      btnToggle?.classList.add("active");
+    }
+    updateGeoBtn();
+  }
+
   window.AdvancedUI = {
     filterQuery,
     filterSummary,
@@ -796,6 +859,7 @@
     onResultsRendered,
     clearSelection,
     resetFilters,
+    applyAiFilters,
     isSelected: id => selected.has(Number(id)),
   };
 })();

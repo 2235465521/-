@@ -23,6 +23,7 @@ from config import (  # noqa: E402
     SECRET_KEY,
     SESSION_DAYS,
 )
+from core.ai_search import ai_configured, parse_natural_query  # noqa: E402
 from core.auth import (  # noqa: E402
     DEFAULT_USER_PASS,
     DEFAULT_USER_USER,
@@ -404,6 +405,31 @@ def api_download_file(file_id: int):
 # ---------- 鉴权 ----------
 
 
+@app.route("/api/ai/search", methods=["POST"])
+@require_login
+def api_ai_search():
+    """自然语言检索意图解析 → 结构化筛选条件。"""
+    if not ai_configured():
+        return jsonify(
+            {
+                "ok": False,
+                "error": "未配置智谱 API Key（.env 中 ZHIPU_API_KEY）",
+                "code": "ai_not_configured",
+            }
+        ), 503
+    body = request.get_json(silent=True) or {}
+    prompt = (body.get("prompt") or body.get("q") or "").strip()
+    try:
+        result = parse_natural_query(prompt)
+        return jsonify(result)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"ok": False, "error": str(e)}), 502
+    except Exception as e:  # noqa: BLE001
+        return _api_error(f"AI 检索解析失败：{e}")
+
+
 @app.route("/api/auth/me")
 def api_auth_me():
     user = current_user()
@@ -413,6 +439,7 @@ def api_auth_me():
             "authenticated": bool(user),
             "user": user.to_public() if user else None,
             "allow_register": ALLOW_REGISTER,
+            "ai_enabled": ai_configured(),
         }
     )
 
@@ -566,6 +593,7 @@ def api_health():
             "pdf_search_root": str(PDF_SEARCH_ROOT),
             "pdf_search_exists": PDF_SEARCH_ROOT.is_dir(),
             "allow_register": ALLOW_REGISTER,
+            "ai_enabled": ai_configured(),
         }
     )
 

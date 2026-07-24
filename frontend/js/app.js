@@ -155,6 +155,12 @@
     if (btnAdvanced) {
       btnAdvanced.style.display = mode === "search" ? "" : "none";
     }
+    if (window.AiSearchUI?.setVisible) {
+      window.AiSearchUI.setVisible(mode === "search");
+    } else {
+      const aiPanel = document.getElementById("aiSearchPanel");
+      if (aiPanel) aiPanel.hidden = mode !== "search";
+    }
     if (advancedPanel) {
       if (mode !== "search") {
         advancedPanel.hidden = true;

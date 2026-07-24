@@ -7,7 +7,7 @@
   <title>ZKBZ 标准PDF下载</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/main.css?v=4.7.1" />
+  <link rel="stylesheet" href="css/main.css?v=4.8.0" />
 </head>
 <body>
   <div class="app-shell" id="appLayout" hidden>
@@ -124,6 +124,30 @@
             </button>
           </div>
         </div>
+
+        <section class="ai-search-panel" id="aiSearchPanel">
+          <div class="ai-search-head">
+            <span class="ai-search-badge">AI</span>
+            <span class="ai-search-title">AI检索</span>
+          </div>
+          <div class="ai-search-row">
+            <input
+              type="text"
+              id="aiPrompt"
+              class="ai-search-input"
+              placeholder="用自然语言描述需求，例如：近五年现行的饮料相关国家标准，起草单位在山东"
+              autocomplete="off"
+            />
+            <button type="button" class="btn-ai-search" id="btnAiSearch">AI检索</button>
+          </div>
+          <div class="ai-suggestions" id="aiSuggestions">
+            <span class="ai-sug-label">常用示例：</span>
+            <button type="button" class="ai-sug" data-prompt="近五年现行的饮料相关国家标准">近五年现行饮料国标</button>
+            <button type="button" class="ai-sug" data-prompt="山东地区牙膏相关现行标准">山东牙膏现行标准</button>
+            <button type="button" class="ai-sug" data-prompt="废止的煤矿安全行业标准">废止煤矿行标</button>
+          </div>
+          <p class="ai-search-hint" id="aiSearchHint" hidden></p>
+        </section>
 
         <div class="advanced-panel" id="advancedPanel" hidden>
           <div class="advanced-grid">
@@ -307,8 +331,9 @@
 
   <script src="js/auth.js?v=1.3.0"></script>
   <script src="js/workflow.js?v=1.2.0"></script>
-  <script src="js/app.js?v=4.4.1"></script>
-  <script src="js/advanced.js?v=4.3.0"></script>
+  <script src="js/app.js?v=4.5.0"></script>
+  <script src="js/advanced.js?v=4.5.0"></script>
+  <script src="js/ai-search.js?v=1.0.1"></script>
   <script src="js/batch.js?v=4.1.1"></script>
   <script>
     (async function () {
