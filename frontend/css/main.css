@@ -2796,7 +2796,8 @@
     .batch-float {
       position: fixed;
       inset: 0;
-      z-index: 90;
+      /* 高于高级筛选面板(120)及其下拉建议(200)，避免被遮挡 */
+      z-index: 320;
       display: flex;
       align-items: flex-end;
       justify-content: flex-end;

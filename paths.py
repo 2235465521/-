@@ -14,20 +14,49 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
 # ---------- 标准 PDF 根目录 ----------
+# 库内 file_path 多为相对路径，如 国标下载/国标/xxx.pdf
 _DEFAULT_PDF_ROOTS = [
     r"Y:\磁盘阵列\标准文件下载",
     r"E:\磁盘阵列\标准文件下载",
     r"Z:\磁盘阵列\标准文件下载",
     r"Z:\磁盘阵列\标准文件下载目录",
 ]
-_env_root = os.getenv("PDF_ROOT", "").strip()
-if _env_root:
-    PDF_ROOT = Path(_env_root)
-else:
-    PDF_ROOT = next(
-        (Path(p) for p in _DEFAULT_PDF_ROOTS if Path(p).is_dir()),
-        BASE_DIR / "data" / "pdf_files",
-    )
+
+_STD_ROOT_MARKERS = (
+    "国标下载",
+    "行标下载",
+    "地标下载",
+    "企标下载",
+    "团体标准",
+)
+
+
+def _resolve_pdf_root() -> Path:
+    env_root = os.getenv("PDF_ROOT", "").strip()
+    if env_root:
+        return Path(env_root)
+
+    candidates: list[Path] = [Path(p) for p in _DEFAULT_PDF_ROOTS]
+
+    # 常见布局：与本项目同级的「国标下载 / 企标下载 …」所在目录
+    parent = BASE_DIR.parent
+    if any((parent / name).is_dir() for name in _STD_ROOT_MARKERS):
+        candidates.insert(0, parent)
+
+    for path in candidates:
+        if path.is_dir():
+            return path
+
+    # 最后回退到项目内目录，并自动创建，避免「根目录不存在」阻断批量下载入口
+    fallback = BASE_DIR / "data" / "pdf_files"
+    try:
+        fallback.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return fallback
+
+
+PDF_ROOT = _resolve_pdf_root()
 
 # ---------- 标准 PDF 搜索根目录 ----------
 PDF_SEARCH_ROOT = Path(os.getenv("PDF_SEARCH_ROOT", str(PDF_ROOT.parent)))
