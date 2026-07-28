@@ -20,7 +20,8 @@ def _system_prompt() -> str:
 {{
   "q": "标准编号或名称关键词（短词，如 煤矿、GB/T 1002）",
   "ex_state": "1=现行，0=废止，2=即将实施；不确定则省略",
-  "std_type": "标准类型原文，如 国家标准、行业标准、地方标准、团体标准",
+  "std_category": "标准大类：国家标准/行业标准/地方标准/团体标准",
+  "std_type": "标准代号原文，如 GB、GB/T、AQ、DB；口语大类请填 std_category",
   "province": "省/直辖市名，如 山东、北京",
   "city": "市名",
   "county": "区/县名",
@@ -36,7 +37,7 @@ def _system_prompt() -> str:
 规则：
 - 「近N年」以 {year} 为截止年，year_from={year}-N+1，year_to={year}
 - 「现行/有效」→ ex_state=1；「废止/作废」→ 0
-- 「国标/国家标准」→ std_type 填「国家标准」（系统会映射为 GB）；「地标」→ 地方标准；「团标」→ 团体标准；「行标」可不填 std_type，把主题词放进 q/product
+- 「国标/国家标准」→ std_category 填「国家标准」；「地标」→ 地方标准；「团标」→ 团体标准；「行标」→ 行业标准；具体代号如 GB/T 填 std_type
 - 品类词（饮料、牙膏等）优先放入 product，主题词也可放 q
 - 不要编造不存在的标准号
 - 输出必须是合法 JSON
@@ -89,30 +90,37 @@ def _normalize_filters(data: dict[str, Any]) -> dict[str, Any]:
     elif ex in ("即将实施",):
         out["ex_state"] = "2"
 
-    for key in ("std_type", "province", "city", "county", "product", "company"):
+    for key in ("std_type", "std_category", "province", "city", "county", "product", "company"):
         val = _s(key)
         if val:
             out[key] = val
 
-    # 库内 std_type 多为 GB/T、DB、AQ 等代号，将口语类型映射为可 LIKE 匹配的片段
-    type_map = {
-        "国家标准": "GB",
-        "国标": "GB",
-        "行业标准": "",  # 代号分散，改靠关键词
-        "行标": "",
-        "地方标准": "DB",
-        "地标": "DB",
-        "团体标准": "T/",
-        "团标": "T/",
-        "企业标准": "Q/",
-        "国际标准": "ISO",
+    # 口语大类 → std_category；具体代号仍走 std_type
+    category_map = {
+        "国家标准": "国家标准",
+        "国标": "国家标准",
+        "行业标准": "行业标准",
+        "行标": "行业标准",
+        "地方标准": "地方标准",
+        "地标": "地方标准",
+        "团体标准": "团体标准",
+        "团标": "团体标准",
+        # 企标并入行业标准
+        "企业标准": "行业标准",
+        "企标": "行业标准",
     }
-    mapped = type_map.get(out.get("std_type", ""))
-    if mapped is not None:
+    raw_type = out.get("std_type", "")
+    if raw_type in category_map:
+        out["std_category"] = category_map[raw_type]
+        out.pop("std_type", None)
+    elif not out.get("std_category"):
+        # 兼容旧映射：仅代号前缀（GB/DB 等）留给 std_type LIKE
+        type_map = {
+            "国际标准": "ISO",
+        }
+        mapped = type_map.get(raw_type)
         if mapped:
             out["std_type"] = mapped
-        else:
-            out.pop("std_type", None)
 
     # 「饮料相关」等品类：同时写入 product，便于产品簇扩展
     if out.get("q") and not out.get("product"):
@@ -153,6 +161,7 @@ def _normalize_filters(data: dict[str, Any]) -> dict[str, Any]:
         for k in (
             "q",
             "ex_state",
+            "std_category",
             "std_type",
             "province",
             "city",

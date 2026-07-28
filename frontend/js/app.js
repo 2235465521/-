@@ -1,16 +1,13 @@
-/** 标准检索 / 同类产品 / 模块切换 */
+/** 标准检索主界面（批量下载由右下角浮窗打开） */
 (function () {
   const mainArea = document.getElementById("mainArea");
   const searchPanel = document.getElementById("searchPanel");
-  const batchStage = document.getElementById("batchStage");
   const searchTools = document.getElementById("searchTools");
   const advancedPanel = document.getElementById("advancedPanel");
   const form = document.getElementById("searchForm");
   const input = document.getElementById("query");
   const results = document.getElementById("results");
   const btnSearch = document.getElementById("btnSearch");
-  const productBanner = document.getElementById("productBanner");
-  const productClusterList = document.getElementById("productClusterList");
   const pageTitle = document.getElementById("pageTitle");
   const pageSubtitle = document.getElementById("pageSubtitle");
   const headerDbStatus = document.getElementById("headerDbStatus");
@@ -20,14 +17,6 @@
       title: "标准检索",
       subtitle: "支持标准编号、名称检索与多维度高级筛选，一键下载 PDF。",
     },
-    product: {
-      title: "同类产品",
-      subtitle: "输入产品名称，自动扩展同类关键词并检索相关标准。",
-    },
-    batch: {
-      title: "Excel 批量下载",
-      subtitle: "上传标准清单，自动匹配并打包 ZIP 下载。",
-    },
   };
 
   const PER_PAGE = 10;
@@ -36,8 +25,6 @@
   let currentPage = 1;
   const modeQueries = {
     search: "",
-    product: "",
-    batch: "",
   };
 
   function persistModeQuery() {
@@ -53,7 +40,7 @@
   }
 
   function isSearchLikeMode(mode) {
-    return mode === "search" || mode === "product" || isCatalogMode(mode);
+    return mode === "search" || isCatalogMode(mode);
   }
 
   function escapeHtml(s) {
@@ -99,120 +86,47 @@
     return `${v.toFixed(i ? 1 : 0)} ${u[i]}`;
   }
 
-  function setMode(mode) {
-    if (mode !== currentMode) {
-      persistModeQuery();
-    }
-    currentMode = mode;
+  function setMode(_mode) {
+    currentMode = "search";
     if (!mainArea) return;
-    mainArea.classList.remove(
-      "mode-search",
-      "mode-batch",
-      "mode-product"
-    );
-    if (mode === "batch") mainArea.classList.add("mode-batch");
-    else if (mode === "product") mainArea.classList.add("mode-product");
-    else mainArea.classList.add("mode-search");
-
-    document.querySelectorAll(".nav-group[data-mode]").forEach(g => {
-      const active = g.dataset.mode === mode;
-      g.classList.toggle("active-mode", active);
-      if (g.dataset.mode === "product") {
-        g.classList.toggle("open", active);
-      } else {
-        g.classList.remove("open");
-      }
-    });
-
-    applyModeUi(mode);
-    restoreModeQuery(mode);
-  }
-
-  function updateCatalogBanner(mode) {
-    if (!productBanner) return;
-    if (mode !== "product") {
-      productBanner.hidden = true;
-    }
+    mainArea.classList.remove("mode-batch", "mode-product");
+    mainArea.classList.add("mode-search");
+    applyModeUi("search");
+    restoreModeQuery("search");
   }
 
   function applyModeUi(mode) {
-    const searchLike = isSearchLikeMode(mode);
     const btnAdvanced = document.getElementById("btnAdvancedToggle");
-    if (searchPanel) searchPanel.hidden = !searchLike && mode !== "batch";
-    if (searchPanel && searchLike) searchPanel.hidden = false;
-    if (results) results.hidden = mode === "batch";
-    if (batchStage) batchStage.hidden = mode !== "batch";
+    if (searchPanel) searchPanel.hidden = false;
+    if (results) results.hidden = false;
     if (searchTools) {
-      const showBulk =
-        mode === "search" ||
-        mode === "product";
-      searchTools.hidden = !showBulk;
+      searchTools.hidden = false;
       searchTools.style.removeProperty("display");
       const bulkBar = searchTools.querySelector(".bulk-bar");
-      if (bulkBar) bulkBar.hidden = mode !== "search" && mode !== "product";
+      if (bulkBar) bulkBar.hidden = false;
     }
     window.WorkflowUI?.updateWorkflowUi?.();
-    if (btnAdvanced) {
-      btnAdvanced.style.display = mode === "search" ? "" : "none";
-    }
-    if (window.AiSearchUI?.setVisible) {
-      window.AiSearchUI.setVisible(mode === "search");
-    } else {
+    if (btnAdvanced) btnAdvanced.style.display = "";
+    if (window.AiSearchUI?.setVisible) window.AiSearchUI.setVisible(true);
+    else {
       const aiPanel = document.getElementById("aiSearchPanel");
-      if (aiPanel) aiPanel.hidden = mode !== "search";
+      if (aiPanel) aiPanel.hidden = false;
     }
-    if (advancedPanel) {
-      if (mode !== "search") {
-        advancedPanel.hidden = true;
-        btnAdvanced?.classList.remove("active");
-      } else if (!btnAdvanced?.classList.contains("active")) {
-        advancedPanel.hidden = true;
-      }
-    }
-
     if (input) {
-      const placeholders = {
-        product: "输入产品名，如：牙膏、牛奶、化妆品",
-      };
-      input.placeholder =
-        placeholders[mode] || "标准编号或名称关键词，如 GB/T 1002-2024、煤矿";
+      input.placeholder = "标准编号或名称关键词，如 GB/T 1002-2024、煤矿";
     }
-    const btnLabels = {
-      product: "同类检索",
-    };
     if (btnSearch && !btnSearch.classList.contains("is-cancel")) {
-      btnSearch.textContent = btnLabels[mode] || "检索";
+      btnSearch.textContent = "检索";
     }
-
-    updateCatalogBanner(mode);
     updatePageHead(mode);
-
-    if (mode === "batch" && batchStage) batchStage.style.display = "flex";
-    window.AdvancedUI?.clearSelection?.();
   }
-
-  document.querySelectorAll("[data-mode-switch]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const mode = btn.dataset.modeSwitch || "search";
-      if (mode === "product" && currentMode === "product") {
-        document
-          .querySelector('.nav-group[data-mode="product"]')
-          ?.classList.toggle("open");
-        return;
-      }
-      setMode(mode);
-      if (results && mode !== "batch") {
-        results.innerHTML = "";
-      }
-    });
-  });
 
   function updatePageHead(mode) {
     const copy = PAGE_COPY[mode] || PAGE_COPY.search;
     if (pageTitle) pageTitle.textContent = copy.title;
     if (pageSubtitle) pageSubtitle.textContent = copy.subtitle;
     const pageHead = document.getElementById("pageHead");
-    if (pageHead) pageHead.hidden = mode === "batch";
+    if (pageHead) pageHead.hidden = false;
   }
 
   function statusPillClass(label) {
@@ -389,17 +303,6 @@
   function renderItems(data) {
     const items = data.items || [];
 
-    if (data.resolved && productBanner && currentMode === "product") {
-      const r = data.resolved;
-      const kws = (r.keywords || []).slice(0, 12).join("、");
-      const groups = (r.cluster_names || []).join("、") || "—";
-      productBanner.innerHTML = `<strong>同类产品扩展检索</strong>
-        <span class="resolve-sub">命中产品组：${escapeHtml(groups)}</span>
-        <span class="resolve-sub">扩展词：${escapeHtml(kws)}${(r.keywords || []).length > 12 ? "…" : ""}</span>`;
-      productBanner.hidden = false;
-    } else if (productBanner) {
-      productBanner.hidden = currentMode !== "product";
-    }
 
     if (!items.length) {
       results.innerHTML =
@@ -409,7 +312,6 @@
 
     const canBulk =
       currentMode === "search" ||
-      currentMode === "product" ||
       isCatalogMode(currentMode);
     const from = data.total ? (data.page - 1) * data.per_page + 1 : 0;
     const to = Math.min(data.page * data.per_page, data.total);
@@ -490,10 +392,7 @@
   }
 
   function searchButtonLabel() {
-    const btnLabels = {
-      product: "同类检索",
-    };
-    return btnLabels[currentMode] || "检索";
+    return "检索";
   }
 
   function cancelSearch() {
@@ -554,9 +453,7 @@
     params.set("page", String(currentPage));
     params.set("per_page", String(PER_PAGE));
     params.set("enrich", "0");
-    if (currentMode === "product") {
-      params.set("source", "product");
-    } else if (isCatalogMode(currentMode)) {
+    if (isCatalogMode(currentMode)) {
       params.set("source", currentMode);
     } else if (advActive && window.AdvancedUI?.filterQuery) {
       if (window.AdvancedUI.validateRankFilter && !window.AdvancedUI.validateRankFilter()) {
@@ -600,33 +497,6 @@
     }
   }
 
-  async function loadProductClusters() {
-    if (!productClusterList) return;
-    try {
-      const res = await fetch("/api/product/clusters");
-      const data = await res.json();
-      if (!data.ok) return;
-      productClusterList.innerHTML = (data.clusters || [])
-        .map(
-          c => `<li><button type="button" class="cat-item" data-kw="${escapeHtml((c.keywords || [])[0] || c.name)}">${escapeHtml(c.name || c.id)}</button></li>`
-        )
-        .join("");
-      productClusterList.querySelectorAll(".cat-item").forEach(btn => {
-        btn.addEventListener("click", () => {
-          productClusterList.querySelectorAll(".cat-item.active").forEach(el => {
-            el.classList.remove("active");
-          });
-          btn.classList.add("active");
-          setMode("product");
-          if (input) {
-            input.value = btn.dataset.kw || "";
-            modeQueries.product = input.value;
-          }
-          doSearch(1);
-        });
-      });
-    } catch (_) {}
-  }
 
   if (form) {
     form.addEventListener("submit", e => {
@@ -666,7 +536,6 @@
     }
   }
 
-  loadProductClusters();
   loadHealth();
   setMode("search");
 

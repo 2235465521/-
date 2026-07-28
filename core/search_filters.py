@@ -12,6 +12,7 @@ from config import PRODUCT_CLUSTERS_PATH
 @dataclass
 class AdvancedFilters:
     ex_states: list[int] = field(default_factory=list)
+    std_category: str = ""
     std_type: str = ""
     province: str = ""
     city: str = ""
@@ -26,6 +27,7 @@ class AdvancedFilters:
     def active(self) -> bool:
         return bool(
             self.ex_states
+            or self.std_category
             or self.std_type
             or self.province
             or self.city
@@ -41,6 +43,7 @@ class AdvancedFilters:
     def cache_suffix(self) -> str:
         parts = [
             f"ex{','.join(map(str, self.ex_states))}",
+            f"c{self.std_category}",
             f"t{self.std_type}",
             f"p{self.province}|{self.city}|{self.county}",
             f"pd{self.product}",
@@ -69,6 +72,7 @@ def parse_advanced_filters(args: dict[str, Any]) -> AdvancedFilters:
 
     return AdvancedFilters(
         ex_states=ex_states,
+        std_category=_txt("std_category"),
         std_type=_txt("std_type"),
         province=_txt("province"),
         city=_txt("city"),
@@ -183,9 +187,17 @@ def build_advanced_where(
         clauses.append(f"b.ex_state IN ({placeholders})")
         args.extend(filters.ex_states)
 
+    # 具体代号优先；仅选大类时按五类规则过滤
     if filters.std_type:
         clauses.append(f"b.std_type LIKE {param}")
         args.append(f"%{filters.std_type}%")
+    elif filters.std_category:
+        from core.std_type_groups import std_category_clause
+
+        cat_sql, cat_args = std_category_clause(filters.std_category, param=param)
+        if cat_sql:
+            clauses.append(cat_sql)
+            args.extend(cat_args)
 
     from core.unit_geo import build_geo_where, build_rank_where, needs_geo_filter
 
@@ -244,13 +256,17 @@ def filter_options_payload(
     companies: list[str],
     product_suggestions: list[str] | None = None,
 ) -> dict:
+    from core.std_type_groups import GROUP_ORDER, group_std_types
+
     payload = {
         "ex_states": [
             {"value": 1, "label": "现行"},
             {"value": 2, "label": "即将实施"},
             {"value": 0, "label": "废止"},
         ],
+        "std_categories": list(GROUP_ORDER),
         "std_types": std_types,
+        "std_type_groups": group_std_types(std_types, include_empty=True),
         "provinces": provinces,
         "cities": cities,
         "counties": counties,

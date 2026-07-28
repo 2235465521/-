@@ -313,6 +313,41 @@
   setMeta("后端模式 · 自动读 E 盘 · 支持 .xlsx / .csv · 单次最多 400 条");
   setStep(1);
 
+  const batchFloat = el("batchFloat");
+  const btnBatchFab = el("btnBatchFab");
+  const btnBatchFloatClose = el("btnBatchFloatClose");
+  const batchFloatBackdrop = el("batchFloatBackdrop");
+
+  function openBatchFloat() {
+    if (!batchFloat) return;
+    batchFloat.hidden = false;
+    document.body.classList.add("batch-float-open");
+    btnBatchFab?.setAttribute("aria-expanded", "true");
+    btnBatchFab?.classList.add("is-open");
+  }
+
+  function closeBatchFloat() {
+    if (!batchFloat) return;
+    batchFloat.hidden = true;
+    document.body.classList.remove("batch-float-open");
+    btnBatchFab?.setAttribute("aria-expanded", "false");
+    btnBatchFab?.classList.remove("is-open");
+  }
+
+  function toggleBatchFloat() {
+    if (!batchFloat || batchFloat.hidden) openBatchFloat();
+    else closeBatchFloat();
+  }
+
+  btnBatchFab?.addEventListener("click", toggleBatchFloat);
+  btnBatchFloatClose?.addEventListener("click", closeBatchFloat);
+  batchFloatBackdrop?.addEventListener("click", closeBatchFloat);
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && batchFloat && !batchFloat.hidden) {
+      closeBatchFloat();
+    }
+  });
+
   fetch("/api/meta/health")
     .then(r => r.json())
     .then(info => {
@@ -327,4 +362,6 @@
       }
     })
     .catch(() => {});
+
+  window.BatchUI = { open: openBatchFloat, close: closeBatchFloat, toggle: toggleBatchFloat };
 })();

@@ -268,7 +268,7 @@ class Database:
             "has_pdf": has_pdf,
         }
 
-    def list_std_types(self, limit: int = 80) -> list[str]:
+    def list_std_types(self, limit: int = 500) -> list[str]:
         if not self._mysql_available():
             return []
         seen: set[str] = set()
@@ -278,10 +278,11 @@ class Database:
             cur.execute(
                 """
                 SELECT DISTINCT std_type FROM std_base
-                WHERE std_type IS NOT NULL AND std_type != ''
-                ORDER BY std_type LIMIT %s
+                WHERE std_type IS NOT NULL AND TRIM(std_type) != ''
+                ORDER BY std_type
+                LIMIT %s
                 """,
-                (limit,),
+                (max(1, min(int(limit), 2000)),),
             )
             for row in cur.fetchall():
                 t = (row.get("std_type") or "").strip()
@@ -466,108 +467,6 @@ class Database:
             "total_pages": total_pages,
             "items": items,
             "search_mode": "advanced",
-            "pdf_only": pdf_only,
-        }
-
-    def search_page_cluster(
-        self,
-        keywords: list[str],
-        page: int = 1,
-        per_page: int = 10,
-        *,
-        pdf_only: bool = True,
-        std_folder: str | None = None,
-        primary_keyword: str | None = None,
-    ) -> dict:
-        kws: list[str] = []
-        seen: set[str] = set()
-        for k in keywords:
-            t = (k or "").strip()
-            if t and t not in seen:
-                seen.add(t)
-                kws.append(t)
-        if not kws:
-            return self._empty_page(page, per_page, "product_cluster")
-        kws = kws[:24]
-        page = max(1, page)
-        per_page = min(max(per_page, 1), 50)
-        offset = (page - 1) * per_page
-        primary = (primary_keyword or kws[0]).strip()
-        if not self._mysql_available():
-            return self._empty_page(page, per_page, "product_cluster")
-        return self._search_page_cluster_mysql(
-            kws, primary, page, per_page, offset, pdf_only, std_folder
-        )
-
-    def _cluster_score_sql(
-        self, keywords: list[str], primary: str
-    ) -> tuple[str, list]:
-        parts: list[str] = []
-        args: list = []
-        for kw in keywords:
-            pat = f"%{kw}%"
-            weight = 2 if kw == primary else 1
-            parts.append(
-                f"(CASE WHEN b.std_chinesename LIKE %s THEN {weight} ELSE 0 END)"
-            )
-            args.append(pat)
-        return " + ".join(parts) or "0", args
-
-    def _cluster_name_where_sql(self, keywords: list[str]) -> tuple[str, list]:
-        parts = ["b.std_chinesename LIKE %s" for _ in keywords]
-        args = [f"%{kw}%" for kw in keywords]
-        return "(" + " OR ".join(parts) + ")", args
-
-    def _search_page_cluster_mysql(
-        self,
-        keywords: list[str],
-        primary: str,
-        page: int,
-        per_page: int,
-        offset: int,
-        pdf_only: bool,
-        std_folder: str | None,
-    ) -> dict:
-        score_sql, score_args = self._cluster_score_sql(keywords, primary)
-        where_sql, where_args = self._cluster_name_where_sql(keywords)
-        folder_sql, folder_args = self._folder_exists_sql(std_folder)
-        pdf_sql = (
-            " AND EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
-            if pdf_only
-            else ""
-        )
-        with self._mysql() as conn:
-            cur = conn.cursor()
-            count_sql = f"""
-                SELECT COUNT(DISTINCT b.id) AS c FROM std_base b
-                WHERE {where_sql}{pdf_sql}{folder_sql}
-            """
-            search_sql = f"""
-                SELECT DISTINCT b.*, ({score_sql}) AS match_score
-                FROM std_base b
-                WHERE {where_sql}{pdf_sql}{folder_sql}
-                ORDER BY match_score DESC, b.std_id
-                LIMIT %s OFFSET %s
-            """
-            cur.execute(count_sql, where_args + list(folder_args))
-            total = int(cur.fetchone()["c"])
-            cur.execute(
-                search_sql,
-                where_args + score_args + list(folder_args) + [per_page, offset],
-            )
-            rows = list(cur.fetchall())
-            files_by_id = self._fetch_files_by_ids_mysql(
-                cur, [int(r["id"]) for r in rows]
-            )
-            items = self._rows_to_lite_with_pdf(rows, files_by_id)
-        total_pages = (total + per_page - 1) // per_page if total else 0
-        return {
-            "total": total,
-            "page": page,
-            "per_page": per_page,
-            "total_pages": total_pages,
-            "items": items,
-            "search_mode": "product_cluster",
             "pdf_only": pdf_only,
         }
 

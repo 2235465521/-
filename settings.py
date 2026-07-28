@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import os
-import secrets
-from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -14,31 +12,6 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "5000"))
 DEBUG = os.getenv("DEBUG", "false").lower() in ("1", "true", "yes")
 OPEN_BROWSER = os.getenv("OPEN_BROWSER", "true").lower() in ("1", "true", "yes")
-
-# 登录会话；未配置时写入 data/.flask_secret 并复用
-ALLOW_REGISTER = os.getenv("ALLOW_REGISTER", "true").lower() in ("1", "true", "yes")
-SESSION_DAYS = int(os.getenv("SESSION_DAYS", "7"))
-
-
-def _resolve_secret_key() -> str:
-    env_key = (os.getenv("SECRET_KEY") or "").strip()
-    if env_key:
-        return env_key
-    secret_path = Path(__file__).resolve().parent / "data" / ".flask_secret"
-    try:
-        if secret_path.is_file():
-            saved = secret_path.read_text(encoding="utf-8").strip()
-            if saved:
-                return saved
-        secret_path.parent.mkdir(parents=True, exist_ok=True)
-        generated = secrets.token_hex(32)
-        secret_path.write_text(generated, encoding="utf-8")
-        return generated
-    except OSError:
-        return secrets.token_hex(32)
-
-
-SECRET_KEY = _resolve_secret_key()
 
 MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))

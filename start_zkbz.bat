@@ -57,7 +57,7 @@ if not "%SETUP_EC%"=="0" (
 )
 
 if not exist "data\product_clusters.json" (
-    echo  [提示] 未找到 data\product_clusters.json，同类产品扩展可能受限
+    echo  [提示] 未找到 data\product_clusters.json，高级筛选「产品/品种」扩展可能受限
 )
 
 echo.

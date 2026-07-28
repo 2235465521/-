@@ -10,7 +10,7 @@
 
   const fields = {
     exState: el("advExState"),
-    stdType: el("advStdType"),
+    stdCategory: el("advStdCategory"),
     province: el("advProvince"),
     city: el("advCity"),
     county: el("advCounty"),
@@ -51,6 +51,40 @@
     if (cur && [...select.options].some(o => o.value === cur)) {
       select.value = cur;
     }
+  }
+
+  function fillStdCategorySelect(categories) {
+    const select = fields.stdCategory;
+    if (!select) return;
+    const cur = select.value;
+    fillSelect(select, categories || [], "标准大类（全部）");
+    if (cur && [...select.options].some(o => o.value === cur)) {
+      select.value = cur;
+    }
+  }
+
+  /** AI/旧条件中的代号或口语 → 标准大类 */
+  function inferStdCategory(raw) {
+    const t = String(raw || "").trim();
+    if (!t) return "";
+    const cn = {
+      国标: "国家标准",
+      国家标准: "国家标准",
+      行标: "行业标准",
+      行业标准: "行业标准",
+      地标: "地方标准",
+      地方标准: "地方标准",
+      团标: "团体标准",
+      团体标准: "团体标准",
+      企标: "行业标准",
+      企业标准: "行业标准",
+    };
+    if (cn[t]) return cn[t];
+    const u = t.toUpperCase().replace(/\s+/g, "");
+    if (u.startsWith("GB")) return "国家标准";
+    if (u.startsWith("DB")) return "地方标准";
+    if (u === "T" || u.startsWith("T/")) return "团体标准";
+    return "行业标准";
   }
 
   function initYearSelects() {
@@ -402,7 +436,7 @@
 
   function appendFilterParams(p) {
     if (fields.exState?.value) p.set("ex_state", fields.exState.value);
-    if (fields.stdType?.value) p.set("std_type", fields.stdType.value);
+    if (fields.stdCategory?.value) p.set("std_category", fields.stdCategory.value);
     if (fields.province?.value) p.set("province", fields.province.value);
     if (fields.city?.value) p.set("city", fields.city.value);
     if (fields.county?.value) p.set("county", fields.county.value);
@@ -425,7 +459,7 @@
       if (!data.ok) return;
       if (data.provinces && !opts.province && !opts.company_q && !opts.product_q) {
         fillSelect(fields.province, data.provinces, "省（全部）");
-        fillSelect(fields.stdType, data.std_types, "标准类型（全部）");
+        fillStdCategorySelect(data.std_categories);
         setProductSuggestions(data.products, null);
         if (fields.exState && fields.exState.options.length <= 1) {
           fillSelect(fields.exState, data.ex_states, "状态（全部）", "value", "label");
@@ -510,7 +544,7 @@
   function geoFilterBody() {
     const body = {};
     if (fields.exState?.value) body.ex_state = fields.exState.value;
-    if (fields.stdType?.value) body.std_type = fields.stdType.value;
+    if (fields.stdCategory?.value) body.std_category = fields.stdCategory.value;
     if (fields.province?.value) body.province = fields.province.value;
     if (fields.city?.value) body.city = fields.city.value;
     if (fields.county?.value) body.county = fields.county.value;
@@ -623,10 +657,7 @@
 
   function onResultsRendered(data, searchMode) {
     if (searchMode === "batch") return;
-    if (
-      searchMode !== "search" &&
-      searchMode !== "product"
-    ) {
+    if (searchMode !== "search") {
       return;
     }
 
@@ -830,13 +861,11 @@
     }
 
     if (f.ex_state != null && fields.exState) fields.exState.value = String(f.ex_state);
-    if (f.std_type && fields.stdType) {
-      const opts = [...(fields.stdType.options || [])];
-      const hit =
-        opts.find(o => o.value === f.std_type) ||
-        opts.find(o => o.value && (o.value.includes(f.std_type) || f.std_type.includes(o.value)));
-      if (hit) fields.stdType.value = hit.value;
-      else fields.stdType.value = f.std_type;
+    if (fields.stdCategory) {
+      const cat = f.std_category || (f.std_type ? inferStdCategory(f.std_type) : "");
+      if (cat && [...fields.stdCategory.options].some(o => o.value === cat)) {
+        fields.stdCategory.value = cat;
+      }
     }
     if (f.product && fields.product) fields.product.value = f.product;
     if (f.company && fields.company) fields.company.value = f.company;
