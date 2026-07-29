@@ -133,7 +133,7 @@
   function buildProductItems(products, suggestions) {
     const seen = new Set();
     const items = [];
-    const add = (value, label, kind) => {
+    const add = (value, label, kind, cluster) => {
       const v = String(value || "").trim();
       if (!v || seen.has(v)) return;
       seen.add(v);
@@ -141,13 +141,15 @@
         value: v,
         label: label && label !== v ? label : "",
         kind: kind || "product",
+        cluster: cluster || "",
       });
     };
     (products || []).forEach(p => {
-      add(p.name, "产品大类", "category");
-      (p.keywords || []).forEach(kw => add(kw, `${p.name} · ${kw}`, "product"));
+      const name = String(p.name || "").trim();
+      add(name, "产品大类", "category", name);
+      (p.keywords || []).forEach(kw => add(kw, `${name} · ${kw}`, "product", name));
     });
-    (suggestions || []).forEach(s => add(s, s, "product"));
+    (suggestions || []).forEach(s => add(s, s, "product", ""));
     return items;
   }
 
@@ -156,23 +158,87 @@
     if (productComboOpen) renderProductPanel(fields.product?.value || "");
   }
 
+  /** 展开某一产品大类：大类 + 其下全部小类 */
+  function expandProductCluster(clusterName) {
+    const name = String(clusterName || "").trim();
+    if (!name) return [];
+    const items = [];
+    const cat = productSuggestItems.find(it => it.kind === "category" && it.value === name);
+    if (cat) items.push(cat);
+    productSuggestItems.forEach(it => {
+      if (it.kind === "product" && it.cluster === name) items.push(it);
+    });
+    return items;
+  }
+
   function filterProductItems(query) {
-    const q = String(query || "").trim().toLowerCase();
+    const q = String(query || "").trim();
     // 空输入：只列产品大类，便于浏览完整目录
     if (!q) {
       return productSuggestItems.filter(it => it.kind === "category");
     }
+    const qLower = q.toLowerCase();
+
+    // 当前值正好是某大类 → 展示该大类及全部小类
+    const exactCat = productSuggestItems.find(
+      it => it.kind === "category" && it.value.toLowerCase() === qLower
+    );
+    if (exactCat) {
+      return expandProductCluster(exactCat.value);
+    }
+
+    // 当前值正好是某小类 → 展示所属大类及同簇其余小类
+    const exactProduct = productSuggestItems.find(
+      it => it.kind === "product" && it.value.toLowerCase() === qLower
+    );
+    if (exactProduct?.cluster) {
+      return expandProductCluster(exactProduct.cluster);
+    }
+
+    // 模糊匹配：若命中的小类同属一个大类，仍展开整簇便于切换
+    const matchedProducts = productSuggestItems.filter(it => {
+      if (it.kind !== "product") return false;
+      return (
+        it.value.toLowerCase().includes(qLower) ||
+        (it.label && it.label.toLowerCase().includes(qLower))
+      );
+    });
+    const clusters = [
+      ...new Set(matchedProducts.map(it => it.cluster).filter(Boolean)),
+    ];
+    if (clusters.length === 1) {
+      return expandProductCluster(clusters[0]);
+    }
+
     const categories = [];
     const products = [];
     for (const it of productSuggestItems) {
       const hit =
-        it.value.toLowerCase().includes(q) ||
-        (it.label && it.label.toLowerCase().includes(q));
+        it.value.toLowerCase().includes(qLower) ||
+        (it.label && it.label.toLowerCase().includes(qLower));
       if (!hit) continue;
       if (it.kind === "category") categories.push(it);
       else products.push(it);
     }
     return [...categories, ...products].slice(0, 100);
+  }
+
+  function highlightIndexForQuery(items, query) {
+    const q = String(query || "").trim().toLowerCase();
+    if (!q || !items.length) return -1;
+    // 优先高亮当前小类，其次高亮同名大类
+    let idx = items.findIndex(
+      it => it.kind === "product" && it.value.toLowerCase() === q
+    );
+    if (idx >= 0) return idx;
+    idx = items.findIndex(
+      it => it.kind === "category" && it.value.toLowerCase() === q
+    );
+    if (idx >= 0) return idx;
+    idx = items.findIndex(
+      it => it.kind === "product" && it.value.toLowerCase().includes(q)
+    );
+    return idx;
   }
 
   function renderProductPanel(query) {
@@ -183,6 +249,11 @@
       return;
     }
     const q = String(query || "").trim();
+    if (productActiveIdx < 0) {
+      productActiveIdx = highlightIndexForQuery(items, q);
+    } else if (productActiveIdx >= items.length) {
+      productActiveIdx = highlightIndexForQuery(items, q);
+    }
     const head = q
       ? ""
       : `<div class="adv-combo-group-title">产品大类（共 ${items.length} 类，输入可筛选具体产品）</div>`;
@@ -195,11 +266,22 @@
             : "";
           const active = i === productActiveIdx ? " active" : "";
           const kindClass = it.kind === "category" ? " is-category" : "";
-          return `<button type="button" class="adv-combo-item${kindClass}${active}" role="option" data-value="${escapeHtml(it.value)}">${escapeHtml(it.value)}${hint}</button>`;
+          const current =
+            q && it.kind === "product" && it.value.toLowerCase() === q.toLowerCase()
+              ? " is-current"
+              : "";
+          return `<button type="button" class="adv-combo-item${kindClass}${current}${active}" role="option" data-value="${escapeHtml(it.value)}">${escapeHtml(it.value)}${hint}</button>`;
         })
         .join("");
     productPanel.hidden = false;
     productComboOpen = true;
+    if (productActiveIdx >= 0) {
+      requestAnimationFrame(() => {
+        productPanel
+          .querySelectorAll(".adv-combo-item")
+          [productActiveIdx]?.scrollIntoView({ block: "nearest" });
+      });
+    }
   }
 
   function hideProductPanel() {

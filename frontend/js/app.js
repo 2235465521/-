@@ -442,9 +442,54 @@
     setSearching(true);
     results.innerHTML = `
       <div class="loading searching">
-        <div class="spinner"></div>
-        <p class="loading-text">正在检索…</p>
-        <button type="button" class="btn-cancel-search" id="btnCancelSearch">取消检索</button>
+        <div class="loading-head">
+          <p class="loading-text">正在检索…</p>
+          <button type="button" class="btn-cancel-search" id="btnCancelSearch">取消检索</button>
+        </div>
+        <div class="skeleton-table" aria-hidden="true">
+          <div class="skeleton-row is-head">
+            <div class="skeleton-bar w-md"></div>
+            <div class="skeleton-bar w-lg"></div>
+            <div class="skeleton-bar w-sm"></div>
+            <div class="skeleton-bar w-sm"></div>
+            <div class="skeleton-bar w-sm"></div>
+          </div>
+          <div class="skeleton-row">
+            <div class="skeleton-bar w-lg"></div>
+            <div class="skeleton-bar w-full"></div>
+            <div class="skeleton-bar w-md"></div>
+            <div class="skeleton-bar w-sm"></div>
+            <div class="skeleton-bar w-sm"></div>
+          </div>
+          <div class="skeleton-row">
+            <div class="skeleton-bar w-md"></div>
+            <div class="skeleton-bar w-lg"></div>
+            <div class="skeleton-bar w-sm"></div>
+            <div class="skeleton-bar w-md"></div>
+            <div class="skeleton-bar w-sm"></div>
+          </div>
+          <div class="skeleton-row">
+            <div class="skeleton-bar w-full"></div>
+            <div class="skeleton-bar w-md"></div>
+            <div class="skeleton-bar w-sm"></div>
+            <div class="skeleton-bar w-sm"></div>
+            <div class="skeleton-bar w-sm"></div>
+          </div>
+          <div class="skeleton-row">
+            <div class="skeleton-bar w-md"></div>
+            <div class="skeleton-bar w-full"></div>
+            <div class="skeleton-bar w-md"></div>
+            <div class="skeleton-bar w-sm"></div>
+            <div class="skeleton-bar w-sm"></div>
+          </div>
+          <div class="skeleton-row">
+            <div class="skeleton-bar w-lg"></div>
+            <div class="skeleton-bar w-lg"></div>
+            <div class="skeleton-bar w-sm"></div>
+            <div class="skeleton-bar w-md"></div>
+            <div class="skeleton-bar w-sm"></div>
+          </div>
+        </div>
       </div>`;
     document.getElementById("btnCancelSearch")?.addEventListener("click", cancelSearch);
 
