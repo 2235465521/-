@@ -1,0 +1,9 @@
+{
+  "name": "zkbz-frontend",
+  "private": true,
+  "description": "ZKBZ 前端为静态 HTML/CSS/JS，由 Flask 直接托管，无需打包。",
+  "scripts": {
+    "build": "node ./build.mjs",
+    "dev": "node -e \"console.log('请在项目根目录启动 Flask（启动ZKBZ.bat / start_zkbz.bat），不要用 Vite/npm dev。'); process.exit(0)\""
+  }
+}

@@ -65,6 +65,7 @@ MYSQL_DATABASE=STSC_standard_database
 
 | 路径 | 说明 |
 |------|------|
+| `frontend/` | **静态** HTML/CSS/JS，由 Flask 直接托管（**无** Vite，一般不必 `npm run build`） |
 | `data/db_dump/*.sql.gz` | 标准库备份（大文件，建议 Git LFS） |
 | `scripts/setup_mysql.py` | 启动前自动建库/导入 |
 | `.env.example` | 配置模板 |
@@ -79,6 +80,10 @@ PDF_ROOT=你的标准PDF根目录
 ```
 
 ## 常见问题
+
+**在服务器执行 `cd frontend && npm run build` 报找不到 package.json？**  
+本前端是静态页，本来可以没有 Node 工程。现已提供兼容的 `frontend/package.json`：再执行 `npm run build` 会空构建并同步到 `frontend/dist/`。  
+**正确做法仍是**：在项目根目录启动 Flask（`启动ZKBZ.bat` / 等价命令），不要把本项目当成 Vue/Vite 站点单独 `npm run dev`。
 
 **标准库未就绪**  
 - MySQL 服务是否启动  

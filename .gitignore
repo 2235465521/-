@@ -32,3 +32,8 @@ data/pdf_files/
 
 # Temp
 _tmp_*.py
+
+# Frontend（静态站；npm run build 仅兼容流水线，产物不必入库）
+frontend/dist/
+frontend/node_modules/
+node_modules/
