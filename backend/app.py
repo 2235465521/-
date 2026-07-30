@@ -458,6 +458,11 @@ def index_page():
     return send_from_directory(_FRONTEND, "index.html")
 
 
+@app.route("/favicon.svg")
+def static_favicon():
+    return send_from_directory(_FRONTEND, "favicon.svg")
+
+
 @app.route("/css/<path:filename>")
 def static_css(filename: str):
     return send_from_directory(_FRONTEND / "css", filename)
