@@ -2677,7 +2677,24 @@
     .status-pill.soon { background: var(--warn-soft); color: #d46b08; border-color: #ffd591; }
     .status-pill.old { background: #fafafa; color: #8c8c8c; border-color: #d9d9d9; }
     .status-pill.pdf-yes { background: var(--success-soft); color: #389e0d; border-color: #b7eb8f; }
-    .status-pill.pdf-no { background: #fafafa; color: #bfbfbf; border-color: #f0f0f0; }
+    .status-pill.pdf-no {
+      background: #fff7e6;
+      color: #d46b08;
+      border-color: #ffd591;
+      font-weight: 600;
+    }
+    .status-pill.pdf-missing {
+      background: #fff1f0;
+      color: #cf1322;
+      border-color: #ffa39e;
+      font-weight: 600;
+    }
+    .btn-row-dl.disabled.no-pdf-label {
+      background: #fff7e6;
+      color: #d46b08;
+      border: 1px solid #ffd591;
+      min-width: 64px;
+    }
     .btn-row-dl {
       display: inline-flex;
       align-items: center;

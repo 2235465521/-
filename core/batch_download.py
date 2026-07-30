@@ -237,7 +237,27 @@ def resolve_item(query: str) -> dict[str, Any]:
         if hits and normalize_std_id(hits[0].std_id) == normalize_std_id(q):
             std = hits[0]
     if not std:
-        return {"status": "not_found", "query": q, "message": "未找到匹配标准"}
+        return {
+            "status": "not_found",
+            "query": q,
+            "std_id": q,
+            "std_chinesename": "（库中未找到）",
+            "message": "未找到匹配标准",
+            "match_status": "not_found",
+        }
+
+    if _is_abolished(std):
+        return {
+            "status": "abolished",
+            "query": q,
+            "std_id": std.std_id,
+            "std_chinesename": std.std_chinesename,
+            "base_id": std.id,
+            "ex_state": 0,
+            "ex_state_label": "废止",
+            "message": "废止标准，已跳过下载",
+            "match_status": "abolished",
+        }
 
     files = collect_files_for_standard(std)
     pdf_path = pick_pdf_path(std, files)
@@ -248,7 +268,8 @@ def resolve_item(query: str) -> dict[str, Any]:
             "std_id": std.std_id,
             "std_chinesename": std.std_chinesename,
             "base_id": std.id,
-            "message": "已匹配标准但未找到 PDF",
+            "message": "有标准条目，但无 PDF",
+            "match_status": "no_pdf",
         }
 
     zip_name = _safe_zip_name(std.std_id, pdf_path.name)
@@ -290,8 +311,47 @@ def _unique_name(used: set[str], name: str) -> str:
         n += 1
 
 
+def _is_abolished(std) -> bool:
+    """ex_state=0 为废止；兼容状态文案。"""
+    if getattr(std, "ex_state", None) == 0:
+        return True
+    label = (getattr(std, "ex_state_label", None) or getattr(std, "std_status", None) or "").strip()
+    return label in ("废止", "作废")
+
+
+def _excel_remark(status: str | None) -> str:
+    if status == "ok":
+        return ""
+    if status == "abolished":
+        return "废止"
+    return "否"
+
+
 def _failed_status(status: str | None) -> bool:
-    return status in ("not_found", "no_pdf", "error", "empty")
+    return status in ("not_found", "no_pdf", "error", "empty", "abolished")
+
+
+def _abolished_list_text(results: list[dict], *, generated_at: str) -> str:
+    abolished = [r for r in results if r.get("status") == "abolished"]
+    lines = [
+        "跳过废止标准名单",
+        f"生成时间：{generated_at}",
+        f"共 {len(abolished)} 条废止标准未下载",
+        "",
+        "说明：状态为「废止」的标准文件不纳入本次下载。",
+        "",
+    ]
+    if not abolished:
+        lines.append("（本次无废止标准被跳过）")
+    else:
+        for r in abolished:
+            row = r.get("row")
+            row_part = f"第{row}行 | " if row is not None else ""
+            lines.append(
+                f"- {row_part}标准号：{r.get('std_id') or r.get('query') or '—'} | "
+                f"名称：{r.get('std_chinesename') or '—'} | 原因：废止，已跳过"
+            )
+    return "\n".join(lines)
 
 
 def build_annotated_excel(
@@ -345,7 +405,7 @@ def build_annotated_excel(
         while len(cells) <= remark_col:
             cells.append("")
         hit = by_row.get(i + 1)
-        cells[remark_col] = "" if hit and hit.get("status") == "ok" else "否"
+        cells[remark_col] = _excel_remark(hit.get("status") if hit else None)
         for j, val in enumerate(cells):
             ws.cell(row=i + 1, column=j + 1, value=val or None)
 
@@ -378,7 +438,7 @@ def _build_annotated_csv(
         while len(rows[i]) <= remark_col:
             rows[i].append("")
         hit = by_row.get(i + 1)
-        rows[i][remark_col] = "" if hit and hit.get("status") == "ok" else "否"
+        rows[i][remark_col] = _excel_remark(hit.get("status") if hit else None)
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerows(rows)
@@ -436,6 +496,7 @@ def build_zip_archive(
     used_names: set[str] = set()
     results: list[dict] = []
     ok_count = 0
+    abolished_count = 0
 
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         total = len(items)
@@ -447,6 +508,9 @@ def build_zip_archive(
             resolved = resolve_item(query)
             resolved["row"] = row_no
             results.append(resolved)
+            if resolved.get("status") == "abolished":
+                abolished_count += 1
+                continue
             if resolved.get("status") != "ok":
                 continue
             pdf_path = Path(resolved["pdf_path"])
@@ -456,7 +520,12 @@ def build_zip_archive(
                 continue
             prefix = f"{row_no:03d}_"
             entry_name = _unique_name(used_names, prefix + resolved["zip_name"])
-            zf.write(pdf_path, arcname=f"PDF/{entry_name}")
+            try:
+                zf.write(pdf_path, arcname=f"PDF/{entry_name}")
+            except OSError as exc:
+                resolved["status"] = "error"
+                resolved["message"] = f"写入 ZIP 失败：{exc}"
+                continue
             resolved["zip_entry"] = entry_name
             ok_count += 1
 
@@ -469,37 +538,75 @@ def build_zip_archive(
             except Exception:
                 pass
 
+        generated_at = datetime.now().isoformat(timespec="seconds")
+        abolished_items = [r for r in results if r.get("status") == "abolished"]
+        # 清单 JSON 勿把整份 results 里偶发的不可序列化对象带崩
+        safe_results = json.loads(json.dumps(results, ensure_ascii=False, default=str))
         manifest = {
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "generated_at": generated_at,
             "total": total,
             "success": ok_count,
             "failed": total - ok_count,
-            "results": results,
+            "abolished": abolished_count,
+            "abolished_items": [
+                {
+                    "row": r.get("row"),
+                    "query": r.get("query"),
+                    "std_id": r.get("std_id"),
+                    "std_chinesename": r.get("std_chinesename"),
+                    "message": r.get("message"),
+                }
+                for r in abolished_items
+            ],
+            "results": safe_results,
         }
         zf.writestr(
             "_批量下载清单.json",
-            json.dumps(manifest, ensure_ascii=False, indent=2),
+            json.dumps(manifest, ensure_ascii=False, indent=2, default=str),
         )
         lines = [
             "标准 PDF 批量下载清单",
-            f"生成时间：{manifest['generated_at']}",
-            f"共 {total} 条，成功 {ok_count} 条，失败 {total - ok_count} 条",
+            f"生成时间：{generated_at}",
+            f"共 {total} 条，成功 {ok_count} 条，跳过废止 {abolished_count} 条，"
+            f"其他失败 {total - ok_count - abolished_count} 条",
             "",
         ]
         for r in results:
-            mark = "✓" if r.get("status") == "ok" else "✗"
+            if r.get("status") == "ok":
+                mark = "✓"
+            elif r.get("status") == "abolished":
+                mark = "⊘"
+            else:
+                mark = "✗"
             std_id = r.get("std_id") or "—"
             msg = r.get("message") or r.get("status") or ""
             lines.append(
                 f"{mark} 第{r.get('row')}行 | 查询：{r.get('query')} | {std_id} | {msg}"
             )
         zf.writestr("_批量下载清单.txt", "\n".join(lines))
+        # 单独一份废止跳过名单，便于核对
+        zf.writestr(
+            "_跳过废止清单.txt",
+            _abolished_list_text(results, generated_at=generated_at),
+        )
 
     buf.seek(0)
     summary = {
         "total": len(items),
         "success": ok_count,
         "failed": len(items) - ok_count,
+        "abolished": abolished_count,
+        "abolished_items": [
+            {
+                "row": r.get("row"),
+                "query": r.get("query"),
+                "std_id": r.get("std_id"),
+                "std_chinesename": r.get("std_chinesename"),
+                "message": r.get("message"),
+            }
+            for r in results
+            if r.get("status") == "abolished"
+        ],
         "results": results,
     }
     return buf, summary
@@ -582,8 +689,14 @@ def preview_items(items: list[dict]) -> dict[str, Any]:
         resolved["row"] = item.get("row")
         rows.append(resolved)
     ok = sum(1 for r in rows if r.get("status") == "ok")
+    abolished = sum(1 for r in rows if r.get("status") == "abolished")
     return {
         "ok": True,
         "items": rows,
-        "summary": {"total": len(rows), "success": ok, "failed": len(rows) - ok},
+        "summary": {
+            "total": len(rows),
+            "success": ok,
+            "failed": len(rows) - ok,
+            "abolished": abolished,
+        },
     }

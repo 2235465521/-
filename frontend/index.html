@@ -4,10 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="Cache-Control" content="no-cache" />
-  <title>ZKBZ 标准PDF下载</title>
+  <title>标准下载</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/main.css?v=4.10.1" />
+  <link rel="stylesheet" href="css/main.css?v=4.10.2" />
 </head>
 <body>
   <div class="app-shell" id="appLayout">
@@ -21,7 +21,7 @@
               <path d="M9 12h6M9 15.5h6"/>
             </svg>
           </span>
-          <span class="header-badge">ZKBZ 标准PDF下载</span>
+          <span class="header-badge">标准下载</span>
         </div>
         <div class="header-meta">
           <span class="header-db" id="headerDbStatus">加载中…</span>
@@ -149,7 +149,7 @@
               type="text"
               id="query"
               name="q"
-              placeholder="标准编号或名称关键词，如 GB/T 1002-2024、煤矿"
+              placeholder="标准编号或名称，如 GB/T 1002-2024、GB1002、煤矿"
               autocomplete="off"
             />
             <button type="submit" class="btn-search" id="btnSearch">检索</button>
@@ -203,7 +203,7 @@
               <ul class="batch-card-list">
                 <li><strong>标准号</strong> — 必填</li>
                 <li><strong>标准名</strong> — 选填</li>
-                <li><strong>备注</strong> — 未找到时自动填「否」</li>
+                <li><strong>备注</strong> — 未找到填「否」，废止填「废止」</li>
               </ul>
               <button type="button" class="btn-template" id="btnBatchTemplate">下载 Excel 模板</button>
             </section>
@@ -246,9 +246,9 @@
   </div>
 
   <script src="js/workflow.js?v=1.2.0"></script>
-  <script src="js/app.js?v=4.8.0"></script>
-  <script src="js/advanced.js?v=4.9.1"></script>
+  <script src="js/app.js?v=4.9.3"></script>
+  <script src="js/advanced.js?v=4.9.2"></script>
   <script src="js/ai-search.js?v=1.0.1"></script>
-  <script src="js/batch.js?v=4.3.1"></script>
+  <script src="js/batch.js?v=4.3.4"></script>
 </body>
 </html>

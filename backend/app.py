@@ -7,7 +7,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, jsonify, redirect, request, send_file, send_from_directory
+from flask import Flask, Response, jsonify, redirect, request, send_file, send_from_directory
+from urllib.parse import quote
 
 _ROOT = Path(__file__).resolve().parents[1]
 _FRONTEND = _ROOT / "frontend"
@@ -103,6 +104,9 @@ def _standard_json(std: StandardInfo) -> dict:
 def _enrich_items(items: list[dict]) -> list[dict]:
     out: list[dict] = []
     for it in items:
+        if it.get("match_status") == "not_found" or it.get("id") is None:
+            out.append(it)
+            continue
         std = db.get_by_id(int(it["id"]))
         if not std:
             out.append(it)
@@ -110,8 +114,43 @@ def _enrich_items(items: list[dict]) -> list[dict]:
         full = _standard_json(std)
         # 与列表 has_pdf 一致：存在与标准号（含年份）匹配的 PDF 记录即可
         full["has_pdf"] = bool(full.get("files"))
+        if not full["has_pdf"]:
+            full["match_status"] = "no_pdf"
         out.append(full)
     return out
+
+
+def _maybe_attach_not_found(q: str, data: dict, *, page: int) -> dict:
+    """标准号检索在库中无命中时，补一条「未找到」结果（首页）。"""
+    from core.std_normalize import (
+        looks_like_std_query,
+        normalize_std_id,
+        not_found_list_item,
+    )
+
+    q = (q or "").strip()
+    if page != 1 or not q or not looks_like_std_query(q):
+        return data
+
+    items = list(data.get("items") or [])
+    qn = normalize_std_id(q)
+    for it in items:
+        if normalize_std_id(it.get("std_id") or "") == qn:
+            if not it.get("has_pdf"):
+                it["match_status"] = "no_pdf"
+            return data
+
+    # 库中确无该标准号（与批量 resolve 一致）
+    if db.search_std_id(q):
+        return data
+
+    placeholder = not_found_list_item(q)
+    data["items"] = [placeholder] + items
+    data["total"] = int(data.get("total") or 0) + 1
+    # 占位计入总数后，总页数至少为 1
+    per = int(data.get("per_page") or 10) or 10
+    data["total_pages"] = max(1, (data["total"] + per - 1) // per)
+    return data
 
 
 @app.route("/api/search")
@@ -120,7 +159,7 @@ def api_search():
         q = (request.args.get("q") or "").strip()
         page = max(1, int(request.args.get("page", 1)))
         per_page = min(50, max(1, int(request.args.get("per_page", 10))))
-        pdf_only = request.args.get("pdf_only", "1") != "0"
+        pdf_only = request.args.get("pdf_only", "0") == "1"
         enrich = request.args.get("enrich", "0") == "1"
 
         if not db.is_ready():
@@ -164,6 +203,9 @@ def api_search():
         else:
             data = db.search_page(q, page=page, per_page=per_page, pdf_only=pdf_only)
 
+        # 像标准号但库中无精确匹配时，返回「未找到」占位条目（与批量预览一致）
+        data = _maybe_attach_not_found(q, data, page=page)
+
         if enrich:
             data["items"] = _enrich_items(data.get("items") or [])
         return jsonify({"ok": True, "query": q, "workflow": workflow, **data})
@@ -204,6 +246,26 @@ def api_search_filters():
         product_suggestions=suggest_phrases(product_q, limit=16) if product_q else [],
     )
     return jsonify({"ok": True, **payload})
+
+
+def _send_zip_with_summary(buf, download_name: str, summary: dict):
+    """返回 ZIP（用内存字节，避免 BytesIO + send_file 在部分部署下 500）。"""
+    if hasattr(buf, "seek"):
+        buf.seek(0)
+    payload = buf.getvalue() if hasattr(buf, "getvalue") else bytes(buf)
+    ascii_name = "standards_pdf_batch.zip"
+    encoded = quote(download_name or ascii_name)
+    resp = Response(payload, mimetype="application/zip")
+    resp.headers["Content-Disposition"] = (
+        f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}"
+    )
+    resp.headers["Content-Length"] = str(len(payload))
+    resp.headers["X-Download-Success"] = str(summary.get("success", 0))
+    resp.headers["X-Download-Abolished"] = str(summary.get("abolished", 0))
+    resp.headers["Access-Control-Expose-Headers"] = (
+        "X-Download-Success, X-Download-Abolished, Content-Disposition"
+    )
+    return resp
 
 
 @app.route("/api/download/geo/preview")
@@ -250,21 +312,20 @@ def api_download_geo():
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
     if summary.get("success", 0) < 1:
-        return jsonify(
-            {
-                "ok": False,
-                "error": "未找到任何可打包的 PDF",
-                "summary": summary,
-                **preview,
-            }
-        ), 404
+        # 仍有废止跳过名单时，返回 ZIP（内含 _跳过废止清单.txt）
+        if summary.get("abolished", 0) < 1:
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "未找到任何可打包的 PDF",
+                    "summary": summary,
+                    **preview,
+                }
+            ), 404
     region = preview.get("region") or "地区"
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return send_file(
-        buf,
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name=f"地区批量下载_{region}_{stamp}.zip",
+    return _send_zip_with_summary(
+        buf, f"地区批量下载_{region}_{stamp}.zip", summary
     )
 
 
@@ -280,20 +341,16 @@ def api_download_bulk():
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
     if summary.get("success", 0) < 1:
-        return jsonify(
-            {
-                "ok": False,
-                "error": "所选条目均未找到可用文件",
-                "summary": summary,
-            }
-        ), 404
+        if summary.get("abolished", 0) < 1:
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "所选条目均未找到可用文件",
+                    "summary": summary,
+                }
+            ), 404
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return send_file(
-        buf,
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name=f"{zip_label}_{stamp}.zip",
-    )
+    return _send_zip_with_summary(buf, f"{zip_label}_{stamp}.zip", summary)
 
 
 @app.route("/api/std/<int:base_id>")
@@ -310,6 +367,16 @@ def api_download_file(file_id: int):
     if not rec:
         return jsonify({"ok": False, "error": "文件记录不存在"}), 404
     std = db.get_by_id(rec["base_id"])
+    if std and std.ex_state == 0:
+        return jsonify(
+            {
+                "ok": False,
+                "error": f"废止标准不可下载：{std.std_id or file_id}",
+                "ex_state": 0,
+                "ex_state_label": "废止",
+                "std_id": std.std_id,
+            }
+        ), 403
     if std and not db_filepath_matches_std(
         std.std_id or "", rec.get("file_name"), rec.get("file_path")
     ):
@@ -434,47 +501,55 @@ def api_batch_download():
     original_filename: str | None = None
     parse_meta: dict | None = None
 
-    if request.files.get("file"):
-        upload = request.files["file"]
-        original_filename = upload.filename or "upload.xlsx"
-        original_data = upload.read()
-        parsed = parse_upload(original_filename, original_data)
-        if not parsed.get("ok"):
-            return jsonify(parsed), 400
-        parse_meta = parsed.get("meta")
-        items = parsed.get("items") or []
-        form_items = request.form.get("items")
-        if form_items:
-            try:
-                items = json.loads(form_items)
-            except json.JSONDecodeError:
-                pass
-    else:
-        body = request.get_json(silent=True) or {}
-        items = body.get("items") or []
+    try:
+        if request.files.get("file"):
+            upload = request.files["file"]
+            original_filename = upload.filename or "upload.xlsx"
+            original_data = upload.read()
+            parsed = parse_upload(original_filename, original_data)
+            if not parsed.get("ok"):
+                return jsonify(parsed), 400
+            parse_meta = parsed.get("meta")
+            items = parsed.get("items") or []
+            form_items = request.form.get("items")
+            if form_items:
+                try:
+                    items = json.loads(form_items)
+                except json.JSONDecodeError:
+                    pass
+        else:
+            body = request.get_json(silent=True) or {}
+            items = body.get("items") or []
 
-    if not items:
-        return jsonify({"ok": False, "error": "无待下载条目"}), 400
+        if not items:
+            return jsonify({"ok": False, "error": "无待下载条目"}), 400
 
-    if not db.is_ready():
-        return jsonify({"ok": False, "error": "标准库未就绪：请配置 .env 中的 MySQL，并导入标准库备份后重启服务"}), 503
+        if not db.is_ready():
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "标准库未就绪：请配置 .env 中的 MySQL，并导入标准库备份后重启服务",
+                }
+            ), 503
 
-    buf, summary = build_zip_archive(
-        items,
-        original_data=original_data,
-        original_filename=original_filename,
-        parse_meta=parse_meta,
-    )
-    if summary["success"] < 1:
-        return jsonify({"ok": False, "error": "未找到任何可打包的 PDF", "summary": summary}), 404
+        buf, summary = build_zip_archive(
+            items,
+            original_data=original_data,
+            original_filename=original_filename,
+            parse_meta=parse_meta,
+        )
+        if summary["success"] < 1 and summary.get("abolished", 0) < 1:
+            return jsonify(
+                {"ok": False, "error": "未找到任何可打包的 PDF", "summary": summary}
+            ), 404
 
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return send_file(
-        buf,
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name=f"标准PDF批量下载_{stamp}.zip",
-    )
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return _send_zip_with_summary(buf, f"标准PDF批量下载_{stamp}.zip", summary)
+    except Exception as exc:
+        import traceback
+
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": f"批量打包失败：{exc}"}), 500
 
 
 def main() -> None:
@@ -483,7 +558,7 @@ def main() -> None:
     url = f"http://127.0.0.1:{PORT}/"
     print()
     print("  ========================================")
-    print(f"    PDF 下载  v{APP_VERSION}")
+    print(f"    标准下载  v{APP_VERSION}")
     print(f"    浏览器打开: {url}")
     print(f"    数据库: {db.backend_name()}  PDF根目录: {PDF_ROOT}")
     print("    无需登录，所有用户可直接检索与下载")

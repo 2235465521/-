@@ -170,14 +170,17 @@ def build_advanced_where(
         # - 纯中文/短词：只扫标准名称（避免无意义的 std_id LIKE '%中文%'）
         # - 编号类：与普通检索一致（标准号前缀 + 名称），不扫 filepath，避免先查询后筛选变慢
         if _looks_like_file_keyword(q):
-            # 与普通检索一致：前缀命中 std_id（可走索引）+ 名称模糊；不做 filepath 全表扫描
+            from core.std_normalize import normalize_std_id, sql_std_id_norm_expr
+
+            # 与普通检索一致：兼容「代号与顺序号无空格」紧凑写法
             prefix = f"{q}%"
-            norm = re.sub(r"\s+", "", q.strip().upper()).replace("／", "/")
+            norm = normalize_std_id(q)
+            sid_norm = sql_std_id_norm_expr("b.std_id")
             clauses.append(
-                f"(b.std_id LIKE {param} OR REPLACE(UPPER(b.std_id),' ','') = {param} "
-                f"OR b.std_chinesename LIKE {param})"
+                f"(b.std_id LIKE {param} OR {sid_norm} = {param} "
+                f"OR {sid_norm} LIKE {param} OR b.std_chinesename LIKE {param})"
             )
-            args.extend([prefix, norm, pattern])
+            args.extend([prefix, norm, f"{norm}%", pattern])
         else:
             clauses.append(f"b.std_chinesename LIKE {param}")
             args.append(pattern)

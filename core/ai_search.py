@@ -30,7 +30,7 @@ def _system_prompt() -> str:
   "unit_rank": "起草顺位：1/2/3 或 gt3（第4及以后）；需配合 company",
   "year_from": 起始年份整数,
   "year_to": 截止年份整数,
-  "pdf_only": "1 只要有PDF，0 不限；默认 1",
+  "pdf_only": "1 只要有PDF，0 不限；默认 0（无PDF的标准也会返回并标注）",
   "summary": "一句话复述你理解的检索意图"
 }}
 
@@ -149,7 +149,7 @@ def _normalize_filters(data: dict[str, Any]) -> dict[str, Any]:
     if pdf_only in ("0", "1"):
         out["pdf_only"] = pdf_only
     else:
-        out["pdf_only"] = "1"
+        out["pdf_only"] = "0"
 
     summary = _s("summary")
     if summary:

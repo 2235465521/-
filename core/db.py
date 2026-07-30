@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -13,7 +12,11 @@ from config import (
     MYSQL_PORT,
     MYSQL_USER,
 )
-from core.std_normalize import db_filepath_matches_std
+from core.std_normalize import (
+    db_filepath_matches_std,
+    normalize_std_id,
+    sql_std_id_norm_expr,
+)
 
 EX_STATE_LABEL = {0: "废止", 1: "现行", 2: "即将实施"}
 
@@ -30,13 +33,6 @@ class StandardInfo:
     release_date: str | None
     implement_date: str | None
     files: list[dict]
-
-
-def normalize_std_id(std_id: str) -> str:
-    s = std_id.strip().upper()
-    s = re.sub(r"\s+", "", s)
-    s = s.replace("／", "/")
-    return s
 
 
 def _row_to_standard(row: dict, files: list[dict]) -> StandardInfo:
@@ -118,6 +114,7 @@ class Database:
         if not q or not self._mysql_available():
             return []
         norm = normalize_std_id(q)
+        sid_norm = sql_std_id_norm_expr("std_id")
         results: list[StandardInfo] = []
         seen: set[int] = set()
         with self._mysql() as conn:
@@ -128,8 +125,12 @@ class Database:
                     (q, limit),
                 ),
                 (
-                    "SELECT * FROM std_base WHERE REPLACE(UPPER(std_id),' ','') = %s LIMIT %s",
+                    f"SELECT * FROM std_base WHERE {sid_norm} = %s LIMIT %s",
                     (norm, limit),
+                ),
+                (
+                    f"SELECT * FROM std_base WHERE {sid_norm} LIKE %s LIMIT %s",
+                    (f"{norm}%", limit),
                 ),
                 (
                     "SELECT * FROM std_base WHERE std_id LIKE %s LIMIT %s",
@@ -172,17 +173,21 @@ class Database:
             return cur.fetchone()
 
     def search_std_id(self, query: str) -> StandardInfo | None:
-        """仅按标准号精确/变体匹配（批量下载用，不用名称模糊）。"""
+        """仅按标准号精确/变体匹配（批量下载用，不用名称模糊）。
+
+        兼容无空格紧凑写法：GB12523 / GBT12523 / GB/T12523 等。
+        """
         q = (query or "").strip()
         if not q or not self._mysql_available():
             return None
         norm = normalize_std_id(q)
+        sid_norm = sql_std_id_norm_expr("std_id")
         with self._mysql() as conn:
             cur = conn.cursor()
             cur.execute(
-                """
+                f"""
                 SELECT * FROM std_base
-                WHERE REPLACE(UPPER(std_id),' ','') = %s OR std_id = %s
+                WHERE {sid_norm} = %s OR std_id = %s
                 LIMIT 1
                 """,
                 (norm, q),
@@ -191,14 +196,33 @@ class Database:
             if row:
                 files = self._fetch_files_mysql(cur, row["id"])
                 return _row_to_standard(row, files)
+
+            # 无空格 / 无年号前缀：GB12523 → GB 12523-2025
             cur.execute(
-                "SELECT * FROM std_base WHERE std_id LIKE %s LIMIT 5",
-                (f"%{q.strip()}%",),
+                f"SELECT * FROM std_base WHERE {sid_norm} LIKE %s LIMIT 8",
+                (f"{norm}%",),
             )
-            for row in cur.fetchall():
-                if normalize_std_id(row.get("std_id") or "") == norm:
-                    files = self._fetch_files_mysql(cur, row["id"])
-                    return _row_to_standard(row, files)
+            candidates = list(cur.fetchall())
+            exactish = [
+                r
+                for r in candidates
+                if normalize_std_id(r.get("std_id") or "") == norm
+            ]
+            if exactish:
+                files = self._fetch_files_mysql(cur, exactish[0]["id"])
+                return _row_to_standard(exactish[0], files)
+            if "-" not in norm:
+                year_hits = [
+                    r
+                    for r in candidates
+                    if normalize_std_id(r.get("std_id") or "").startswith(norm + "-")
+                ]
+                if year_hits:
+                    files = self._fetch_files_mysql(cur, year_hits[0]["id"])
+                    return _row_to_standard(year_hits[0], files)
+            if len(candidates) == 1:
+                files = self._fetch_files_mysql(cur, candidates[0]["id"])
+                return _row_to_standard(candidates[0], files)
         return None
 
     def _has_pdf_mysql(self, cur, base_id: int) -> bool:
@@ -266,6 +290,7 @@ class Database:
             "release_date": row.get("release_date"),
             "implement_date": row.get("implement_date"),
             "has_pdf": has_pdf,
+            "match_status": "ok" if has_pdf else "no_pdf",
         }
 
     def list_std_types(self, limit: int = 500) -> list[str]:
@@ -335,11 +360,14 @@ class Database:
 
         pattern = f"%{q}%"
         norm = normalize_std_id(q)
+        sid_norm = sql_std_id_norm_expr("b.std_id")
         if _looks_like_file_keyword(q):
+            # 官方写法「代号 空格 顺序号」；兼容无空格 GB12523 / GBT12523 / GB/T12523
             where_parts = [
-                "(b.std_id LIKE %s OR REPLACE(UPPER(b.std_id),' ','') = %s OR b.std_chinesename LIKE %s)"
+                f"(b.std_id LIKE %s OR {sid_norm} = %s OR {sid_norm} LIKE %s "
+                f"OR b.std_chinesename LIKE %s)"
             ]
-            args: list = [f"{q}%", norm, pattern]
+            args: list = [f"{q}%", norm, f"{norm}%", pattern]
         else:
             where_parts = ["b.std_chinesename LIKE %s"]
             args = [pattern]

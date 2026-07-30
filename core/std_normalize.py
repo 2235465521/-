@@ -20,6 +20,8 @@ _STD_COMPACT = re.compile(
 def normalize_std_id(std_id: str) -> str:
     """统一检索键：大写、去空格、去斜杠/下划线、统一连字符。
 
+    按标准编号惯例「代号 + 空格 + 顺序号 + 连字符 + 年号」编写；
+    检索时兼容无空格紧凑写法：GB12523、GBT12523、GB/T12523 均归一。
     兼容常见文件名写法：GB/T、GB_T、GBT 均归一为 GBT。
     """
     s = std_id.strip().upper()
@@ -28,6 +30,46 @@ def normalize_std_id(std_id: str) -> str:
     s = s.replace("/", "").replace("_", "")
     s = s.replace("—", "-").replace("－", "-")
     return s
+
+
+def sql_std_id_norm_expr(column: str = "std_id") -> str:
+    """MySQL 表达式，与 normalize_std_id 对齐（去空格/斜杠/下划线，统一连字符）。"""
+    # 顺序需与 Python normalize_std_id 一致
+    return (
+        f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
+        f"UPPER({column}),'／','/'),' ',''),'/',''),'_',''),'—','-'),'－','-')"
+    )
+
+
+def looks_like_std_query(text: str) -> bool:
+    """判断用户输入是否像标准号（用于检索无命中时返回「未找到」占位）。"""
+    q = (text or "").strip()
+    if len(q) < 4:
+        return False
+    if parse_std_parts(q):
+        return True
+    # 宽松：字母前缀 + 数字，如 GB12523、DL/T1050、HJ 2025
+    compact = normalize_std_id(q)
+    return bool(re.match(r"^[A-Z]{1,8}\d{2,}", compact))
+
+
+def not_found_list_item(query: str) -> dict:
+    """普通检索占位条目：库中无此标准。"""
+    q = (query or "").strip()
+    return {
+        "id": None,
+        "std_id": q,
+        "std_chinesename": "（库中未找到）",
+        "std_type": None,
+        "std_status": None,
+        "ex_state": None,
+        "ex_state_label": "—",
+        "release_date": None,
+        "implement_date": None,
+        "has_pdf": False,
+        "match_status": "not_found",
+        "files": [],
+    }
 
 
 def _normalize_year(year: str | None) -> str:

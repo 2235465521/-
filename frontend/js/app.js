@@ -143,6 +143,55 @@
     return null;
   }
 
+  /** 安全下载：避免接口返回 JSON 错误时被浏览器存成「665332.json」之类假附件 */
+  async function safeDownload(url, fallbackName) {
+    try {
+      const res = await fetch(url);
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      if (!res.ok || ct.includes("application/json")) {
+        let msg = `下载失败（HTTP ${res.status}）`;
+        try {
+          const data = await res.json();
+          if (data?.error) msg = data.error;
+        } catch (_) {}
+        alert(msg);
+        return;
+      }
+      const blob = await res.blob();
+      let name = fallbackName || "download.pdf";
+      const disp = res.headers.get("content-disposition") || "";
+      const m =
+        /filename\*=UTF-8''([^;]+)|filename=\"([^\"]+)\"|filename=([^;]+)/i.exec(
+          disp
+        );
+      if (m) {
+        name = decodeURIComponent((m[1] || m[2] || m[3] || "").trim());
+      }
+      const obj = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = obj;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(obj), 2000);
+    } catch (e) {
+      alert(e.message || "下载失败：网络错误");
+    }
+  }
+
+  function bindSafeDownloadLink(anchor) {
+    if (!anchor || anchor.tagName !== "A") return;
+    const href = anchor.getAttribute("href");
+    if (!href || href === "#" || !href.startsWith("/api/download/")) return;
+    anchor.addEventListener("click", e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const name = anchor.getAttribute("data-filename") || "";
+      safeDownload(href, name);
+    });
+  }
+
   function renderPager(data) {
     if (data.total_pages <= 1) return "";
     const pages = [];
@@ -232,6 +281,10 @@
   }
 
   function renderDetailHtml(item) {
+    const abolished =
+      item.ex_state === 0 ||
+      item.ex_state_label === "废止" ||
+      item.match_status === "abolished";
     const files = dedupeFilesPreferSmaller(item.files || [])
       .map(f => {
         const href = f.id ? `/api/download/${f.id}` : "#";
@@ -242,6 +295,14 @@
         ]
           .filter(Boolean)
           .join(" · ");
+        let action;
+        if (abolished) {
+          action = `<span class="btn-dl disabled" title="废止标准不可下载">废止</span>`;
+        } else if (f.exists) {
+          action = `<a class="btn-dl" href="${href}" data-filename="${escapeHtml(f.file_name || "")}" download>下载</a>`;
+        } else {
+          action = `<span class="btn-dl disabled" title="有标准条目，但磁盘上未找到该 PDF">无PDF</span>`;
+        }
         return `
           <div class="file-row">
             <div class="file-icon">${icon}</div>
@@ -249,19 +310,23 @@
               <div class="file-name">${escapeHtml(f.file_name || "—")}</div>
               <div class="file-meta">${escapeHtml(meta || "—")}</div>
             </div>
-            ${
-              f.exists
-                ? `<a class="btn-dl" href="${href}" download>下载</a>`
-                : `<span class="btn-dl disabled">无文件</span>`
-            }
+            ${action}
           </div>`;
       })
       .join("");
     const blockTitle = isCatalogMode(currentMode) ? "文件" : "PDF 文件";
+    let body =
+      files ||
+      '<div class="file-meta">有标准条目，但无PDF（库内无文件路径或磁盘上未找到）</div>';
+    if (abolished) {
+      body =
+        '<div class="file-meta">该标准已废止，不提供下载。多项/批量打包时会写入「跳过废止清单」。</div>' +
+        body;
+    }
     return `
       <div class="pdf-block">
         <h3>${blockTitle}</h3>
-        ${files || '<div class="file-meta">暂无匹配该版本的 PDF 文件</div>'}
+        ${body}
       </div>`;
   }
 
@@ -288,12 +353,38 @@
       }
       cell.innerHTML = renderDetailHtml(data.item);
       detailRow.dataset.loaded = "1";
+      cell.querySelectorAll("a.btn-dl").forEach(bindSafeDownloadLink);
       const row = results.querySelector(`tr.result-row[data-id="${id}"]`);
       const dl = row?.querySelector(".btn-row-dl");
-      const href = firstDownloadHref(data.item);
-      if (dl && href) {
-        dl.classList.remove("disabled");
-        dl.outerHTML = `<a class="btn-row-dl" href="${href}" download title="下载" onclick="event.stopPropagation()">下载</a>`;
+      const item = data.item;
+      const abolished =
+        item.ex_state === 0 ||
+        item.ex_state_label === "废止" ||
+        item.match_status === "abolished";
+      const href = abolished ? null : firstDownloadHref(item);
+      if (dl && abolished) {
+        dl.outerHTML = `<span class="btn-row-dl disabled" title="废止标准不可下载">废止</span>`;
+        const pill = row?.querySelector(".status-pill.pdf-no, .status-pill.pdf-yes");
+        if (pill) {
+          pill.className = "status-pill pdf-no";
+          pill.textContent = "废止";
+        }
+      } else if (dl && href) {
+        const name = (item.files || []).find(f => f.exists)?.file_name || "";
+        dl.outerHTML = `<a class="btn-row-dl" href="${href}" data-filename="${escapeHtml(name)}" download title="下载">下载</a>`;
+        bindSafeDownloadLink(row.querySelector(".btn-row-dl"));
+        const pill = row?.querySelector(".status-pill.pdf-no, .status-pill.pdf-yes");
+        if (pill) {
+          pill.className = "status-pill pdf-yes";
+          pill.textContent = isCatalogMode(currentMode) ? "有文件" : "PDF";
+        }
+      } else if (dl) {
+        dl.outerHTML = `<span class="btn-row-dl disabled no-pdf-label" title="库中有标准条目，但未收录 PDF 文件">无PDF</span>`;
+        const pill = row?.querySelector(".status-pill.pdf-no, .status-pill.pdf-yes, .status-pill.pdf-missing");
+        if (pill) {
+          pill.className = "status-pill pdf-missing";
+          pill.textContent = isCatalogMode(currentMode) ? "无文件" : "无PDF";
+        }
       }
     } catch (e) {
       cell.innerHTML = `<div class="alert">${escapeHtml(e.message || "加载失败")}</div>`;
@@ -328,34 +419,89 @@
 
     html += items
       .map(item => {
-        const hasFile = item.has_pdf || item.has_file || isCatalogMode(currentMode);
+        const notFound = item.match_status === "not_found";
+        const abolished =
+          !notFound &&
+          (item.ex_state === 0 ||
+            item.ex_state_label === "废止" ||
+            item.match_status === "abolished");
+        const noPdf =
+          !notFound &&
+          !abolished &&
+          !isCatalogMode(currentMode) &&
+          (item.match_status === "no_pdf" || item.has_pdf === false);
+        const hasFile =
+          !notFound &&
+          !abolished &&
+          !noPdf &&
+          (item.has_pdf || item.has_file || isCatalogMode(currentMode));
         const bulkChecked = window.AdvancedUI?.isSelected?.(item.id) ? " checked" : "";
         const bulkDisabled = hasFile ? "" : " disabled";
-        const statusLabel = item.ex_state_label || item.std_status || "—";
-        const dlHref = firstDownloadHref(item);
+        const statusLabel = notFound
+          ? "—"
+          : item.ex_state_label || item.std_status || "—";
+        const dlHref =
+          notFound || abolished || noPdf ? null : firstDownloadHref(item);
+        const pdfLabel = notFound
+          ? "未找到"
+          : abolished
+            ? "废止"
+            : noPdf || !hasFile
+              ? isCatalogMode(currentMode)
+                ? "无文件"
+                : "无PDF"
+              : isCatalogMode(currentMode)
+                ? "有文件"
+                : "有PDF";
+        const pdfPillClass = notFound
+          ? "pdf-no"
+          : abolished
+            ? "pdf-no"
+            : noPdf || !hasFile
+              ? "pdf-missing"
+              : "pdf-yes";
+        const rowId = notFound ? `nf-${escapeHtml(item.std_id || "")}` : String(item.id);
         const checkCell = canBulk
-          ? `<td class="col-check"><input type="checkbox" class="bulk-item-check" data-id="${item.id}" data-std-id="${escapeHtml(item.std_id || "")}"${bulkChecked}${bulkDisabled} onclick="event.stopPropagation()" /></td>`
+          ? `<td class="col-check"><input type="checkbox" class="bulk-item-check" data-id="${item.id ?? ""}" data-std-id="${escapeHtml(item.std_id || "")}"${bulkChecked}${bulkDisabled} ${notFound || abolished || noPdf ? "disabled" : ""} onclick="event.stopPropagation()" /></td>`
           : "";
+        const actionTitle = notFound
+          ? "库中未找到该标准"
+          : abolished
+            ? "废止标准不可下载"
+            : "库中有标准条目，但未收录 PDF 文件";
+        const actionText = notFound
+          ? "未找到"
+          : abolished
+            ? "废止"
+            : "无PDF";
         return `
-          <tr class="result-row" data-id="${item.id}">
+          <tr class="result-row${notFound ? " is-not-found" : ""}${abolished ? " is-abolished" : ""}${noPdf ? " is-no-pdf" : ""}" data-id="${rowId}" data-match="${notFound ? "not_found" : abolished ? "abolished" : noPdf ? "no_pdf" : "ok"}">
             ${checkCell}
             <td class="col-code"><span class="cell-code">${escapeHtml(item.std_id || "—")}</span></td>
             <td class="col-name"><span class="cell-name">${escapeHtml(item.std_chinesename || "（无名称）")}</span></td>
-            <td class="col-date">${escapeHtml(formatReleaseDate(item.release_date))}</td>
+            <td class="col-date">${escapeHtml(notFound ? "—" : formatReleaseDate(item.release_date))}</td>
             <td class="col-status">
-              <span class="status-pill ${statusPillClass(statusLabel)}">${escapeHtml(statusLabel)}</span>
-              <span class="status-pill ${hasFile ? "pdf-yes" : "pdf-no"}" style="margin-left:0.25rem">${hasFile ? (isCatalogMode(currentMode) ? "有文件" : "PDF") : "无PDF"}</span>
+              <span class="status-pill ${notFound ? "old" : statusPillClass(statusLabel)}">${escapeHtml(statusLabel)}</span>
+              <span class="status-pill ${pdfPillClass}" style="margin-left:0.25rem">${pdfLabel}</span>
             </td>
             <td class="col-action">
               ${
                 dlHref
                   ? `<a class="btn-row-dl" href="${dlHref}" download title="下载" onclick="event.stopPropagation()">下载</a>`
-                  : `<span class="btn-row-dl disabled">下载</span>`
+                  : `<span class="btn-row-dl disabled${noPdf || (!notFound && !abolished) ? " no-pdf-label" : ""}" title="${actionTitle}">${actionText}</span>`
               }
             </td>
           </tr>
-          <tr class="result-detail-row" data-for="${item.id}" style="display:none">
-            <td colspan="${canBulk ? 6 : 5}"><div class="detail-placeholder">展开此行加载 PDF 文件列表</div></td>
+          <tr class="result-detail-row" data-for="${rowId}" style="display:none">
+            <td colspan="${canBulk ? 6 : 5}"><div class="detail-placeholder">${
+              notFound
+                ? "库中未找到匹配标准条目"
+                : abolished
+                  ? "废止标准不可下载，展开可查看说明"
+                  : noPdf
+                    ? "有标准条目，但库中未收录 PDF（标注：无PDF）"
+                    : "展开此行加载 PDF 文件列表"
+            }</div></td>
           </tr>`;
       })
       .join("");
@@ -367,6 +513,7 @@
     results.querySelectorAll("tr.result-row").forEach(row => {
       row.addEventListener("click", e => {
         if (e.target.closest(".bulk-item-check, .btn-row-dl")) return;
+        if (row.dataset.match === "not_found") return;
         const id = row.dataset.id;
         const detail = results.querySelector(`.result-detail-row[data-for="${id}"]`);
         const open = !row.classList.contains("expanded");
@@ -498,6 +645,7 @@
     params.set("page", String(currentPage));
     params.set("per_page", String(PER_PAGE));
     params.set("enrich", "0");
+    params.set("pdf_only", "0");
     if (isCatalogMode(currentMode)) {
       params.set("source", currentMode);
     } else if (advActive && window.AdvancedUI?.filterQuery) {

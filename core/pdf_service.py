@@ -15,18 +15,46 @@ from core.std_normalize import (
 def find_pdf_on_disk(rel_path: str, file_name: str) -> Path | None:
     """按库内相对路径或文件名，在 PDF 根目录做轻量查找（不做全盘扫描）。"""
     rel = (rel_path or "").replace("\\", "/").lstrip("/")
-    if rel:
-        candidate = (PDF_ROOT / rel).resolve()
-        if candidate.is_file():
-            return candidate
     name = (file_name or "").strip()
+
+    def _candidates(path_str: str) -> list[str]:
+        """兼容破折号/连字符差异（库内常见 — / – / -）。"""
+        s = path_str or ""
+        out = [s]
+        for a, b in (("—", "-"), ("–", "-"), ("−", "-"), ("－", "-")):
+            if a in s:
+                out.append(s.replace(a, b))
+        # 去重保序
+        seen: set[str] = set()
+        uniq: list[str] = []
+        for x in out:
+            if x not in seen:
+                seen.add(x)
+                uniq.append(x)
+        return uniq
+
+    if rel:
+        for r in _candidates(rel):
+            candidate = (PDF_ROOT / r).resolve()
+            if candidate.is_file():
+                return candidate
     if name:
         for root in (PDF_ROOT, PDF_SEARCH_ROOT):
             if not root.is_dir():
                 continue
-            direct = root / name
-            if direct.is_file():
-                return direct
+            for n in _candidates(name):
+                direct = root / n
+                if direct.is_file():
+                    return direct
+                # 常见布局：文件在「行标下载」等一级子目录
+                try:
+                    for sub in root.iterdir():
+                        if sub.is_dir():
+                            p = sub / n
+                            if p.is_file():
+                                return p
+                except OSError:
+                    pass
     return None
 
 

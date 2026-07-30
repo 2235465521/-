@@ -798,6 +798,12 @@
       a.download = name;
       a.click();
       URL.revokeObjectURL(url);
+      const ab = Number(res.headers.get("X-Download-Abolished") || 0);
+      if (ab > 0) {
+        alert(
+          `打包完成。已跳过 ${ab} 条废止标准，详见 ZIP 内「_跳过废止清单.txt」。`
+        );
+      }
     } catch (e) {
       alert(e.message || "网络错误");
     } finally {

@@ -30,7 +30,8 @@
     const map = {
       ok: "可下载",
       not_found: "未找到",
-      no_pdf: "无 PDF",
+      no_pdf: "无PDF",
+      abolished: "废止跳过",
       empty: "空行",
       error: "错误",
     };
@@ -39,7 +40,8 @@
 
   function statusClass(status) {
     if (status === "ok") return "batch-ok";
-    if (status === "not_found" || status === "no_pdf") return "batch-warn";
+    if (status === "not_found" || status === "no_pdf" || status === "abolished")
+      return "batch-warn";
     return "batch-fail";
   }
 
@@ -181,8 +183,13 @@
       renderTable();
       setStep(3);
       const s = data.summary || {};
+      const ab = s.abolished || 0;
+      const abHint =
+        ab > 0
+          ? `，其中废止跳过 <strong>${ab}</strong> 条（下载时不会打包）`
+          : "";
       setFeedback(
-        `<div class="batch-hint">预览完成：共 ${s.total} 条，预计可下载 <strong>${s.success}</strong> 个 PDF，失败 ${s.failed} 条。</div>`
+        `<div class="batch-hint">预览完成：共 ${s.total} 条，预计可下载 <strong>${s.success}</strong> 个 PDF，失败 ${s.failed} 条${abHint}。</div>`
       );
     } catch (e) {
       setFeedback(`<div class="alert">预览失败：${escapeHtml(e.message || "未知错误")}</div>`);
@@ -237,8 +244,13 @@
       a.download = name;
       a.click();
       URL.revokeObjectURL(url);
+      const ab = Number(res.headers.get("X-Download-Abolished") || 0);
+      const abHint =
+        ab > 0
+          ? ` 已跳过废止 <strong>${ab}</strong> 条，见 ZIP 内 <strong>_跳过废止清单.txt</strong>。`
+          : "";
       setFeedback(
-        '<div class="batch-hint">ZIP 已开始下载。内含 PDF、带「否」备注的 Excel 及下载清单。</div>'
+        `<div class="batch-hint">ZIP 已开始下载。内含 PDF、结果 Excel（废止备注为「废止」）、下载清单。${abHint}</div>`
       );
       setStep(3);
     } catch (e) {
