@@ -396,12 +396,16 @@
     }
   }
 
-  function triggerRandomProductGroup() {
+  let hasProductInitialized = false;
+
+  function triggerRandomProductGroup(force = false) {
+    if (hasProductInitialized && !force) return;
     if (!productClusterList) return;
     const items = Array.from(productClusterList.querySelectorAll(".cat-item"));
     if (!items.length) return;
     const randomItem = items[Math.floor(Math.random() * items.length)];
     if (randomItem) {
+      hasProductInitialized = true;
       if (input) {
         input.value = randomItem.dataset.kw || "";
         modeQueries.product = input.value;
@@ -414,11 +418,16 @@
     btn.addEventListener("click", () => {
       const mode = btn.dataset.modeSwitch || "search";
       if (mode === "product") {
-        document
-          .querySelector('.nav-group[data-mode="product"]')
-          ?.classList.add("open");
-        setMode(mode);
-        triggerRandomProductGroup();
+        const navGroup = document.querySelector('.nav-group[data-mode="product"]');
+        if (currentMode === "product") {
+          navGroup?.classList.toggle("open");
+        } else {
+          navGroup?.classList.add("open");
+          setMode(mode);
+          if (!hasProductInitialized && (!input || !input.value.trim())) {
+            triggerRandomProductGroup();
+          }
+        }
         return;
       }
       setMode(mode);
