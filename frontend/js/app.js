@@ -396,13 +396,29 @@
     }
   }
 
+  function triggerRandomProductGroup() {
+    if (!productClusterList) return;
+    const items = Array.from(productClusterList.querySelectorAll(".cat-item"));
+    if (!items.length) return;
+    const randomItem = items[Math.floor(Math.random() * items.length)];
+    if (randomItem) {
+      if (input) {
+        input.value = randomItem.dataset.kw || "";
+        modeQueries.product = input.value;
+      }
+      doSearch(1);
+    }
+  }
+
   document.querySelectorAll("[data-mode-switch]").forEach(btn => {
     btn.addEventListener("click", () => {
       const mode = btn.dataset.modeSwitch || "search";
-      if (mode === "product" && currentMode === "product") {
+      if (mode === "product") {
         document
           .querySelector('.nav-group[data-mode="product"]')
-          ?.classList.toggle("open");
+          ?.classList.add("open");
+        setMode(mode);
+        triggerRandomProductGroup();
         return;
       }
       setMode(mode);
@@ -953,6 +969,9 @@
           doSearch(1);
         });
       });
+      if (currentMode === "product" && (!input || !input.value.trim())) {
+        triggerRandomProductGroup();
+      }
     } catch (_) { }
   }
 
