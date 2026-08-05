@@ -7,16 +7,58 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+PUNCTUATION_RE = re.compile(r"[《》“”\"'‘’：:—－\-（）()·\.,，／/【】\[\]!！?？_~*&\s]+")
+
+
+def clean_query_text(q: str) -> str:
+    """剥离字符串中的各类中英文标点符号与多余空格"""
+    if not q:
+        return ""
+    return PUNCTUATION_RE.sub(" ", q).strip()
+
+
+def extract_core_keywords(q: str) -> list[str]:
+    """从包含标点或前缀的搜索词中提取核心词与短语列表"""
+    cleaned = clean_query_text(q)
+    if not cleaned:
+        return []
+    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9]{2,}", cleaned)
+    if not tokens:
+        return [cleaned] if cleaned else []
+
+    seen = set()
+    result = []
+    ignored = {"附件", "关于", "通知", "文件", "说明", "草案", "拟定", "意见", "标准"}
+    for t in sorted(tokens, key=len, reverse=True):
+        t_lower = t.lower()
+        if t_lower not in seen and t not in ignored:
+            seen.add(t_lower)
+            result.append(t)
+            if len(result) >= 4:
+                break
+    if not result:
+        return tokens[:4]
+    return result
+
 
 def fts_escape_token(token: str) -> str:
-    return token.replace('"', '""')
+    t = PUNCTUATION_RE.sub("", token)
+    return t.replace('"', '""')
 
 
 def build_fts_query(q: str) -> str:
-    tokens = re.findall(r"\S+", (q or "").strip())
-    if not tokens:
+    keywords = extract_core_keywords(q)
+    if not keywords:
+        cleaned = clean_query_text(q)
+        tokens = cleaned.split()
+        keywords = tokens if tokens else ([q.strip()] if q and q.strip() else [])
+
+    valid_tokens = [f'"{fts_escape_token(k)}"*' for k in keywords if fts_escape_token(k)]
+    if not valid_tokens:
         return ""
-    return " OR ".join(f'"{fts_escape_token(t)}"*' for t in tokens[:8])
+    if len(valid_tokens) > 1:
+        return " AND ".join(valid_tokens)
+    return valid_tokens[0]
 
 
 @dataclass
@@ -148,35 +190,40 @@ class DiskCatalog:
         self._init_schema(conn)
 
         insert_sql = f"""
-            INSERT INTO {self.table}
-            (filename, category, title, file_ext, file_size, mtime, rel_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO {self.table} (
+            filename, category, title, file_ext, file_size, mtime, rel_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """
-        batch: list[tuple] = []
         count = 0
+        batch = []
         t0 = time.time()
 
         for path in self.root_dir.rglob("*"):
             if not path.is_file():
                 continue
-            ext = path.suffix.lower()
-            if ext not in self.extensions:
+            if path.suffix.lower() not in self.extensions:
                 continue
+
             row = parse_row(path, self.root_dir)
             if not row:
                 continue
+
             try:
                 st = path.stat()
+                file_size = st.st_size
+                mtime = st.st_mtime
             except OSError:
-                continue
+                file_size = None
+                mtime = time.time()
+
             batch.append(
                 (
                     row["filename"],
                     row["category"],
                     row["title"],
-                    ext,
-                    st.st_size,
-                    st.st_mtime,
+                    path.suffix.lower(),
+                    file_size,
+                    mtime,
                     row["rel_path"],
                 )
             )
@@ -236,13 +283,27 @@ class DiskCatalog:
         q = (q or "").strip()
         if not q:
             return "1=1", []
+
+        keywords = extract_core_keywords(q)
         fts_q = build_fts_query(q)
+
         if fts_q:
             return (
                 f"id IN (SELECT rowid FROM {self.fts_table} WHERE {self.fts_table} MATCH ?)",
                 [fts_q],
             )
-        like = f"%{q}%"
+
+        if keywords:
+            conds = []
+            args = []
+            for kw in keywords:
+                like = f"%{kw}%"
+                conds.append("(category LIKE ? OR title LIKE ? OR filename LIKE ?)")
+                args.extend([like, like, like])
+            return " AND ".join(conds), args
+
+        clean_q = clean_query_text(q) or q
+        like = f"%{clean_q}%"
         return (
             "(category LIKE ? OR title LIKE ? OR filename LIKE ?)",
             [like, like, like],
@@ -271,6 +332,25 @@ class DiskCatalog:
                     args,
                 ).fetchone()[0]
             )
+
+            # 如果 FTS MATCH 未命中（可能带有复杂标点/格式问题），自动回退到基于核心词的 LIKE 模糊匹配兜底
+            if total == 0 and "MATCH" in where_sql:
+                keywords = extract_core_keywords(q)
+                if keywords:
+                    conds = []
+                    args = []
+                    for kw in keywords:
+                        like = f"%{kw}%"
+                        conds.append("(category LIKE ? OR title LIKE ? OR filename LIKE ?)")
+                        args.extend([like, like, like])
+                    where_sql = " AND ".join(conds)
+                    total = int(
+                        conn.execute(
+                            f"SELECT COUNT(*) FROM {self.table} WHERE {where_sql}",
+                            args,
+                        ).fetchone()[0]
+                    )
+
             rows = conn.execute(
                 f"""
                 SELECT * FROM {self.table}
@@ -278,19 +358,20 @@ class DiskCatalog:
                 ORDER BY category, title
                 LIMIT ? OFFSET ?
                 """,
-                (*args, per_page, offset),
+                args + [per_page, offset],
             ).fetchall()
 
-        total_pages = (total + per_page - 1) // per_page if total else 0
-        return {
-            "total": total,
-            "page": page,
-            "per_page": per_page,
-            "total_pages": total_pages,
-            "items": [self._row_to_item(r) for r in rows],
-            "search_mode": self.table,
-            "catalog_ready": True,
-        }
+            items = [self._row_to_item(r) for r in rows]
+            total_pages = (total + per_page - 1) // per_page if total > 0 else 0
+            return {
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+                "items": items,
+                "search_mode": self.table,
+                "catalog_ready": True,
+            }
 
     def get_by_id(self, file_id: int) -> CatalogEntry | None:
         if not self.is_ready():
