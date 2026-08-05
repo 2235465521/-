@@ -651,7 +651,7 @@
     if (fields.yearFrom?.value) body.year_from = fields.yearFrom.value;
     if (fields.yearTo?.value) body.year_to = fields.yearTo.value;
     body.pdf_only = true;
-    body.scan_disk = el("advScanDisk")?.checked !== false;
+    body.scan_disk = true;
     const q = el("query")?.value?.trim();
     if (q) body.q = q;
     return body;
@@ -804,7 +804,7 @@
     if (!selected.size) return;
     const mode = window.AppUI?.getMode?.() || "search";
     const isCatalog = mode === "tuangbiao";
-    const scan = el("advScanDisk")?.checked !== false;
+    const scan = true;
     if (btnBulk) {
       btnBulk.disabled = true;
       btnBulk.textContent = "打包中…";

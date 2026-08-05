@@ -307,7 +307,7 @@
         signal: previewAbortController.signal,
         body: JSON.stringify({
           items: parsedItems,
-          scan_disk: batchScanDisk?.checked === true,
+          scan_disk: true,
         }),
       });
       const data = await res.json();
@@ -383,7 +383,7 @@
     }, 5000);
 
     try {
-      const scan = batchScanDisk?.checked === true;
+      const scan = true;
       const fd = new FormData();
       fd.append("file", file);
       fd.append("items", JSON.stringify(downloadItems));

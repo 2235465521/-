@@ -530,7 +530,7 @@
   }
 
   function scanDiskEnabled() {
-    return document.getElementById("advScanDisk")?.checked !== false;
+    return true;
   }
 
   async function loadRowDetail(id, detailRow) {

@@ -1,3 +1,4 @@
+
 """在 PDF 目录中按标准号发现磁盘文件（数据库无 filepath 记录时使用）。"""
 
 from __future__ import annotations
@@ -77,6 +78,8 @@ def check_file_exists_in_cache(path: Path) -> bool:
     return False
 
 
+import datetime
+
 def start_background_scan() -> None:
     """Start background scan if not already running."""
     global _DISK_PDF_SCANNING
@@ -88,25 +91,54 @@ def start_background_scan() -> None:
     t.start()
 
 
+def _seconds_until_next_midnight() -> float:
+    now = datetime.datetime.now()
+    tomorrow = now.date() + datetime.timedelta(days=1)
+    midnight = datetime.datetime.combine(tomorrow, datetime.time.min)
+    return max((midnight - now).total_seconds(), 1.0)
+
+
+def _midnight_scheduler_loop() -> None:
+    """后台定时任务：每天夜间 00:00 自动触发全量磁盘扫描"""
+    while True:
+        try:
+            secs = _seconds_until_next_midnight()
+            time.sleep(secs)
+            start_background_scan()
+            time.sleep(5)  # 避免极短时间内重复触发
+        except Exception:
+            time.sleep(60)
+
+
+_SCHEDULER_STARTED = False
+
+
+def init_scheduler_and_warmup() -> None:
+    """在服务启动时初始化零点定时器并启动一次后台预热扫描"""
+    global _SCHEDULER_STARTED
+    with _DISK_PDF_CACHE_LOCK:
+        if _SCHEDULER_STARTED:
+            return
+        _SCHEDULER_STARTED = True
+
+    start_background_scan()
+    t = threading.Thread(target=_midnight_scheduler_loop, name="pdf-midnight-scheduler", daemon=True)
+    t.start()
+
+
+# 模块载入时自动初始化定时调度器与后台预热
+init_scheduler_and_warmup()
+
+
 def _get_disk_pdf_list() -> list[Path]:
-    """获取所有磁盘 PDF 文件的列表（带后台扫描与 30 分钟缓存，避免阻塞 web 请求）"""
-    global _DISK_PDF_CACHE, _DISK_PDF_CACHE_TIME
-    now = time.time()
-    
-    cache_empty = not _DISK_PDF_CACHE
-    cache_expired = (now - _DISK_PDF_CACHE_TIME >= CACHE_TTL)
-
-    if cache_empty or cache_expired:
+    """获取所有磁盘 PDF 文件的列表（直接读取内存缓存，绝不阻塞用户 HTTP 请求）"""
+    global _DISK_PDF_CACHE
+    if not _DISK_PDF_CACHE and not _DISK_PDF_SCANNING:
         start_background_scan()
-
-    # If the cache is completely empty, wait up to 8 seconds for the background thread to find initial files (checks _DISK_PDF_SCANNING to exit early)
-    if cache_empty:
-        start_wait = time.time()
-        while _DISK_PDF_SCANNING and not _DISK_PDF_CACHE and (time.time() - start_wait < 8.0):
-            time.sleep(0.1)
 
     with _DISK_PDF_CACHE_LOCK:
         return _DISK_PDF_CACHE
+
 
 
 def extract_std_number_digits(std_id: str) -> str | None:
