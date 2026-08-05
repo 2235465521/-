@@ -10,7 +10,7 @@
 
   const fields = {
     exState: el("advExState"),
-    stdCategory: el("advStdCategory"),
+    stdType: el("advStdType"),
     province: el("advProvince"),
     city: el("advCity"),
     county: el("advCounty"),
@@ -24,8 +24,152 @@
   const selected = new Map();
   let lastPageIds = [];
   let filtersLoaded = false;
+  const ADV_FILTER_HISTORY_KEY = "pdf_adv_filter_history_v1";
+  const advFilterHistory = el("advFilterHistory");
+  const advHistoryChips = el("advHistoryChips");
   const CURRENT_YEAR = new Date().getFullYear();
   const YEAR_MIN = 1980;
+
+  function rankLabel(value) {
+    if (value === "1") return "第1位";
+    if (value === "2") return "第2位";
+    if (value === "3") return "第3位";
+    if (value === "gt3") return "大于三";
+    return "";
+  }
+
+  function snapshotFilters() {
+    return {
+      exState: fields.exState?.value || "",
+      stdType: fields.stdType?.value || "",
+      province: fields.province?.value || "",
+      city: fields.city?.value || "",
+      county: fields.county?.value || "",
+      product: fields.product?.value.trim() || "",
+      company: fields.company?.value.trim() || "",
+      unitRank: fields.unitRank?.value || "",
+      yearFrom: fields.yearFrom?.value || "",
+      yearTo: fields.yearTo?.value || "",
+      q: el("query")?.value.trim() || "",
+    };
+  }
+
+  function historyHasContent(snap) {
+    return Boolean(
+      snap.q ||
+        snap.company ||
+        snap.province ||
+        snap.product ||
+        snap.stdType ||
+        snap.exState ||
+        snap.yearFrom ||
+        snap.yearTo
+    );
+  }
+
+  function historyLabel(snap) {
+    const parts = [];
+    if (snap.q) parts.push(snap.q);
+    if (snap.company) {
+      let text = snap.company;
+      if (snap.unitRank) text += ` · ${rankLabel(snap.unitRank)}`;
+      parts.push(text);
+    }
+    const region = [snap.province, snap.city, snap.county].filter(Boolean).join("");
+    if (region) parts.push(region);
+    if (snap.product) parts.push(snap.product);
+    if (snap.stdType) parts.push(snap.stdType);
+    return parts.join(" / ") || "筛选条件";
+  }
+
+  function loadFilterHistory() {
+    try {
+      return JSON.parse(localStorage.getItem(ADV_FILTER_HISTORY_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  }
+
+  function saveFilterHistory() {
+    const snap = snapshotFilters();
+    if (!historyHasContent(snap)) return;
+    const key = JSON.stringify(snap);
+    let list = loadFilterHistory().filter(item => JSON.stringify(item) !== key);
+    list.unshift(snap);
+    list = list.slice(0, 8);
+    localStorage.setItem(ADV_FILTER_HISTORY_KEY, JSON.stringify(list));
+    renderFilterHistory();
+  }
+
+  function renderFilterHistory() {
+    if (!advFilterHistory || !advHistoryChips) return;
+    const list = loadFilterHistory();
+    if (!list.length) {
+      advFilterHistory.hidden = true;
+      advHistoryChips.innerHTML = "";
+      return;
+    }
+    advFilterHistory.hidden = false;
+    advHistoryChips.innerHTML = list
+      .map(
+        (snap, i) =>
+          `<button type="button" class="chip adv-history-chip" data-idx="${i}" title="点击恢复此筛选">
+            <span class="chip-text">${escapeHtml(historyLabel(snap))}</span>
+            <span class="chip-del" data-del="${i}" aria-label="删除">×</span>
+          </button>`
+      )
+      .join("");
+    advHistoryChips.querySelectorAll(".adv-history-chip").forEach(btn => {
+      btn.addEventListener("click", e => {
+        if (e.target.closest(".chip-del")) return;
+        const idx = Number(btn.dataset.idx);
+        const snap = loadFilterHistory()[idx];
+        if (snap) applyFilterHistory(snap);
+      });
+    });
+    advHistoryChips.querySelectorAll(".chip-del").forEach(del => {
+      del.addEventListener("click", e => {
+        e.stopPropagation();
+        const idx = Number(del.dataset.del);
+        const list = loadFilterHistory();
+        list.splice(idx, 1);
+        localStorage.setItem(ADV_FILTER_HISTORY_KEY, JSON.stringify(list));
+        renderFilterHistory();
+      });
+    });
+  }
+
+  async function applyFilterHistory(snap) {
+    if (!snap) return;
+    if (fields.exState) fields.exState.value = snap.exState || "";
+    if (fields.stdType) fields.stdType.value = snap.stdType || "";
+    if (fields.product) fields.product.value = snap.product || "";
+    if (fields.company) fields.company.value = snap.company || "";
+    if (fields.unitRank) fields.unitRank.value = snap.unitRank || "";
+    if (fields.yearFrom) fields.yearFrom.value = snap.yearFrom || "";
+    if (fields.yearTo) fields.yearTo.value = snap.yearTo || "";
+    if (fields.province) fields.province.value = "";
+    if (fields.city) fields.city.value = "";
+    if (fields.county) fields.county.value = "";
+    if (snap.province) {
+      if (!filtersLoaded) await loadFilters();
+      if (fields.province) fields.province.value = snap.province;
+      await loadFilters({ province: snap.province });
+      if (fields.city) fields.city.value = snap.city || "";
+      if (snap.city) await loadFilters({ province: snap.province, city: snap.city });
+      if (fields.county) fields.county.value = snap.county || "";
+    }
+    const qInput = el("query");
+    if (qInput) {
+      qInput.value = snap.q || "";
+      qInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    updateGeoBtn();
+    updateAdvancedBadge();
+    if (!validateRankFilter()) return;
+    saveFilterHistory();
+    window.dispatchEvent(new CustomEvent("advanced-search"));
+  }
 
   function escapeHtml(s) {
     const d = document.createElement("div");
@@ -53,40 +197,6 @@
     }
   }
 
-  function fillStdCategorySelect(categories) {
-    const select = fields.stdCategory;
-    if (!select) return;
-    const cur = select.value;
-    fillSelect(select, categories || [], "标准大类（全部）");
-    if (cur && [...select.options].some(o => o.value === cur)) {
-      select.value = cur;
-    }
-  }
-
-  /** AI/旧条件中的代号或口语 → 标准大类 */
-  function inferStdCategory(raw) {
-    const t = String(raw || "").trim();
-    if (!t) return "";
-    const cn = {
-      国标: "国家标准",
-      国家标准: "国家标准",
-      行标: "行业标准",
-      行业标准: "行业标准",
-      地标: "地方标准",
-      地方标准: "地方标准",
-      团标: "团体标准",
-      团体标准: "团体标准",
-      企标: "行业标准",
-      企业标准: "行业标准",
-    };
-    if (cn[t]) return cn[t];
-    const u = t.toUpperCase().replace(/\s+/g, "");
-    if (u.startsWith("GB")) return "国家标准";
-    if (u.startsWith("DB")) return "地方标准";
-    if (u === "T" || u.startsWith("T/")) return "团体标准";
-    return "行业标准";
-  }
-
   function initYearSelects() {
     const years = [];
     for (let y = CURRENT_YEAR; y >= YEAR_MIN; y -= 1) {
@@ -103,18 +213,6 @@
     const from = Math.max(YEAR_MIN, to - span + 1);
     if (fields.yearFrom) fields.yearFrom.value = String(from);
     if (fields.yearTo) fields.yearTo.value = String(to);
-    document.querySelectorAll(".year-preset").forEach(btn => {
-      btn.classList.toggle("is-active", Number(btn.dataset.years) === span);
-    });
-  }
-
-  function triggerAdvancedSearch() {
-    if (!validateRankFilter()) return;
-    if (typeof window.AppUI?.doSearch === "function") {
-      window.AppUI.doSearch(1);
-      return;
-    }
-    window.dispatchEvent(new CustomEvent("advanced-search"));
   }
 
   function syncYearRange() {
@@ -133,23 +231,17 @@
   function buildProductItems(products, suggestions) {
     const seen = new Set();
     const items = [];
-    const add = (value, label, kind, cluster) => {
+    const add = (value, label) => {
       const v = String(value || "").trim();
       if (!v || seen.has(v)) return;
       seen.add(v);
-      items.push({
-        value: v,
-        label: label && label !== v ? label : "",
-        kind: kind || "product",
-        cluster: cluster || "",
-      });
+      items.push({ value: v, label: label && label !== v ? label : "" });
     };
     (products || []).forEach(p => {
-      const name = String(p.name || "").trim();
-      add(name, "产品大类", "category", name);
-      (p.keywords || []).forEach(kw => add(kw, `${name} · ${kw}`, "product", name));
+      add(p.name, p.name);
+      (p.keywords || []).forEach(kw => add(kw, `${p.name} · ${kw}`));
     });
-    (suggestions || []).forEach(s => add(s, s, "product", ""));
+    (suggestions || []).forEach(s => add(s, s));
     return items;
   }
 
@@ -158,87 +250,16 @@
     if (productComboOpen) renderProductPanel(fields.product?.value || "");
   }
 
-  /** 展开某一产品大类：大类 + 其下全部小类 */
-  function expandProductCluster(clusterName) {
-    const name = String(clusterName || "").trim();
-    if (!name) return [];
-    const items = [];
-    const cat = productSuggestItems.find(it => it.kind === "category" && it.value === name);
-    if (cat) items.push(cat);
-    productSuggestItems.forEach(it => {
-      if (it.kind === "product" && it.cluster === name) items.push(it);
-    });
-    return items;
-  }
-
   function filterProductItems(query) {
-    const q = String(query || "").trim();
-    // 空输入：只列产品大类，便于浏览完整目录
-    if (!q) {
-      return productSuggestItems.filter(it => it.kind === "category");
-    }
-    const qLower = q.toLowerCase();
-
-    // 当前值正好是某大类 → 展示该大类及全部小类
-    const exactCat = productSuggestItems.find(
-      it => it.kind === "category" && it.value.toLowerCase() === qLower
-    );
-    if (exactCat) {
-      return expandProductCluster(exactCat.value);
-    }
-
-    // 当前值正好是某小类 → 展示所属大类及同簇其余小类
-    const exactProduct = productSuggestItems.find(
-      it => it.kind === "product" && it.value.toLowerCase() === qLower
-    );
-    if (exactProduct?.cluster) {
-      return expandProductCluster(exactProduct.cluster);
-    }
-
-    // 模糊匹配：若命中的小类同属一个大类，仍展开整簇便于切换
-    const matchedProducts = productSuggestItems.filter(it => {
-      if (it.kind !== "product") return false;
-      return (
-        it.value.toLowerCase().includes(qLower) ||
-        (it.label && it.label.toLowerCase().includes(qLower))
-      );
-    });
-    const clusters = [
-      ...new Set(matchedProducts.map(it => it.cluster).filter(Boolean)),
-    ];
-    if (clusters.length === 1) {
-      return expandProductCluster(clusters[0]);
-    }
-
-    const categories = [];
-    const products = [];
-    for (const it of productSuggestItems) {
-      const hit =
-        it.value.toLowerCase().includes(qLower) ||
-        (it.label && it.label.toLowerCase().includes(qLower));
-      if (!hit) continue;
-      if (it.kind === "category") categories.push(it);
-      else products.push(it);
-    }
-    return [...categories, ...products].slice(0, 100);
-  }
-
-  function highlightIndexForQuery(items, query) {
     const q = String(query || "").trim().toLowerCase();
-    if (!q || !items.length) return -1;
-    // 优先高亮当前小类，其次高亮同名大类
-    let idx = items.findIndex(
-      it => it.kind === "product" && it.value.toLowerCase() === q
-    );
-    if (idx >= 0) return idx;
-    idx = items.findIndex(
-      it => it.kind === "category" && it.value.toLowerCase() === q
-    );
-    if (idx >= 0) return idx;
-    idx = items.findIndex(
-      it => it.kind === "product" && it.value.toLowerCase().includes(q)
-    );
-    return idx;
+    if (!q) return productSuggestItems.slice(0, 48);
+    return productSuggestItems
+      .filter(
+        it =>
+          it.value.toLowerCase().includes(q) ||
+          (it.label && it.label.toLowerCase().includes(q))
+      )
+      .slice(0, 48);
   }
 
   function renderProductPanel(query) {
@@ -248,40 +269,17 @@
       hideProductPanel();
       return;
     }
-    const q = String(query || "").trim();
-    if (productActiveIdx < 0) {
-      productActiveIdx = highlightIndexForQuery(items, q);
-    } else if (productActiveIdx >= items.length) {
-      productActiveIdx = highlightIndexForQuery(items, q);
-    }
-    const head = q
-      ? ""
-      : `<div class="adv-combo-group-title">产品大类（共 ${items.length} 类，输入可筛选具体产品）</div>`;
-    productPanel.innerHTML =
-      head +
-      items
-        .map((it, i) => {
-          const hint = it.label
-            ? `<span class="adv-combo-hint">${escapeHtml(it.label)}</span>`
-            : "";
-          const active = i === productActiveIdx ? " active" : "";
-          const kindClass = it.kind === "category" ? " is-category" : "";
-          const current =
-            q && it.kind === "product" && it.value.toLowerCase() === q.toLowerCase()
-              ? " is-current"
-              : "";
-          return `<button type="button" class="adv-combo-item${kindClass}${current}${active}" role="option" data-value="${escapeHtml(it.value)}">${escapeHtml(it.value)}${hint}</button>`;
-        })
-        .join("");
+    productPanel.innerHTML = items
+      .map((it, i) => {
+        const hint = it.label
+          ? `<span class="adv-combo-hint">${escapeHtml(it.label)}</span>`
+          : "";
+        const active = i === productActiveIdx ? " active" : "";
+        return `<button type="button" class="adv-combo-item${active}" role="option" data-value="${escapeHtml(it.value)}">${escapeHtml(it.value)}${hint}</button>`;
+      })
+      .join("");
     productPanel.hidden = false;
     productComboOpen = true;
-    if (productActiveIdx >= 0) {
-      requestAnimationFrame(() => {
-        productPanel
-          .querySelectorAll(".adv-combo-item")
-          [productActiveIdx]?.scrollIntoView({ block: "nearest" });
-      });
-    }
   }
 
   function hideProductPanel() {
@@ -518,7 +516,7 @@
 
   function appendFilterParams(p) {
     if (fields.exState?.value) p.set("ex_state", fields.exState.value);
-    if (fields.stdCategory?.value) p.set("std_category", fields.stdCategory.value);
+    if (fields.stdType?.value) p.set("std_type", fields.stdType.value);
     if (fields.province?.value) p.set("province", fields.province.value);
     if (fields.city?.value) p.set("city", fields.city.value);
     if (fields.county?.value) p.set("county", fields.county.value);
@@ -541,7 +539,7 @@
       if (!data.ok) return;
       if (data.provinces && !opts.province && !opts.company_q && !opts.product_q) {
         fillSelect(fields.province, data.provinces, "省（全部）");
-        fillStdCategorySelect(data.std_categories);
+        fillSelect(fields.stdType, data.std_types, "标准类型（全部）");
         setProductSuggestions(data.products, null);
         if (fields.exState && fields.exState.options.length <= 1) {
           fillSelect(fields.exState, data.ex_states, "状态（全部）", "value", "label");
@@ -561,13 +559,30 @@
   }
 
   function hasActiveFilters() {
-    return Object.entries(fields).some(([key, f]) => {
-      if (!f) return false;
+    return activeFilterCount() > 0;
+  }
+
+  function activeFilterCount() {
+    let n = 0;
+    Object.entries(fields).forEach(([key, f]) => {
+      if (!f) return;
       if (key === "unitRank") {
-        return Boolean(fields.company?.value.trim() && String(f.value || "").trim());
+        if (fields.company?.value.trim() && String(f.value || "").trim()) n += 1;
+        return;
       }
-      return Boolean(String(f.value || "").trim());
+      if (String(f.value || "").trim()) n += 1;
     });
+    return n;
+  }
+
+  function updateAdvancedBadge() {
+    const badge = el("advFilterBadge");
+    const n = activeFilterCount();
+    if (badge) {
+      badge.hidden = n === 0;
+      badge.textContent = String(n);
+    }
+    btnToggle?.classList.toggle("has-filters", n > 0);
   }
 
   function validateRankFilter() {
@@ -626,7 +641,7 @@
   function geoFilterBody() {
     const body = {};
     if (fields.exState?.value) body.ex_state = fields.exState.value;
-    if (fields.stdCategory?.value) body.std_category = fields.stdCategory.value;
+    if (fields.stdType?.value) body.std_type = fields.stdType.value;
     if (fields.province?.value) body.province = fields.province.value;
     if (fields.city?.value) body.city = fields.city.value;
     if (fields.county?.value) body.county = fields.county.value;
@@ -636,6 +651,7 @@
     if (fields.yearFrom?.value) body.year_from = fields.yearFrom.value;
     if (fields.yearTo?.value) body.year_to = fields.yearTo.value;
     body.pdf_only = true;
+    body.scan_disk = el("advScanDisk")?.checked !== false;
     const q = el("query")?.value?.trim();
     if (q) body.q = q;
     return body;
@@ -706,6 +722,21 @@
     const countEl = document.getElementById("bulkCount");
     if (countEl) countEl.textContent = String(n);
     if (btnBulk) btnBulk.disabled = n < 1;
+    const btnClear = el("btnClearSelection");
+    if (btnClear) btnClear.hidden = n < 1;
+  }
+
+  function setBulkBtnLabel() {
+    if (!btnBulk) return;
+    btnBulk.textContent = "";
+    btnBulk.append("打包下载 (");
+    const span = document.createElement("span");
+    span.id = "bulkCount";
+    span.textContent = String(selected.size);
+    btnBulk.append(span, ")");
+    btnBulk.disabled = selected.size < 1;
+    const btnClear = el("btnClearSelection");
+    if (btnClear) btnClear.hidden = selected.size < 1;
   }
 
   function pageSelectableIds() {
@@ -739,7 +770,11 @@
 
   function onResultsRendered(data, searchMode) {
     if (searchMode === "batch") return;
-    if (searchMode !== "search") {
+    if (
+      searchMode !== "search" &&
+      searchMode !== "product" &&
+      searchMode !== "tuangbiao"
+    ) {
       return;
     }
 
@@ -767,12 +802,17 @@
 
   async function doBulkDownload() {
     if (!selected.size) return;
+    const mode = window.AppUI?.getMode?.() || "search";
+    const isCatalog = mode === "tuangbiao";
+    const scan = el("advScanDisk")?.checked !== false;
     if (btnBulk) {
       btnBulk.disabled = true;
       btnBulk.textContent = "打包中…";
     }
     try {
       const body = { ids: [...selected.keys()] };
+      if (isCatalog) body.source = mode;
+      else body.scan_disk = scan;
       const res = await fetch("/api/download/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -789,7 +829,7 @@
       }
       const blob = await res.blob();
       const disp = res.headers.get("content-disposition") || "";
-      let name = "标准PDF多项下载.zip";
+      let name = "标准PDF打包下载.zip";
       const m = /filename\*?=(?:UTF-8'')?["']?([^"';]+)/i.exec(disp);
       if (m) name = decodeURIComponent(m[1].trim());
       const url = URL.createObjectURL(blob);
@@ -801,15 +841,7 @@
     } catch (e) {
       alert(e.message || "网络错误");
     } finally {
-      if (btnBulk) {
-        btnBulk.disabled = selected.size < 1;
-        btnBulk.textContent = "";
-        btnBulk.append("多项下载 (");
-        const span = document.createElement("span");
-        span.id = "bulkCount";
-        span.textContent = String(selected.size);
-        btnBulk.append(span, ")");
-      }
+      if (btnBulk) setBulkBtnLabel();
     }
   }
 
@@ -822,9 +854,10 @@
     hideProductPanel();
     hideCompanyPanel();
     updateGeoBtn();
-    if (!(el("query")?.value || "").trim()) {
-      window.WorkflowUI?.resetPath?.();
-    }
+    updateAdvancedBadge();
+    const q = el("query")?.value?.trim();
+    if (!q) window.AppUI?.loadDefaultResults?.();
+    else window.dispatchEvent(new CustomEvent("advanced-search"));
   }
 
   if (btnToggle && panel) {
@@ -832,6 +865,7 @@
       const open = panel.hidden;
       panel.hidden = !open;
       btnToggle.classList.toggle("active", open);
+      btnToggle.setAttribute("aria-expanded", open ? "true" : "false");
       if (open && !filtersLoaded) loadFilters();
     });
   }
@@ -841,13 +875,18 @@
     if (fields.county) fields.county.value = "";
     loadFilters({ province: fields.province.value });
     updateGeoBtn();
+    updateAdvancedBadge();
   });
   fields.city?.addEventListener("change", () => {
     if (fields.county) fields.county.value = "";
     loadFilters({ province: fields.province?.value, city: fields.city.value });
     updateGeoBtn();
+    updateAdvancedBadge();
   });
-  fields.county?.addEventListener("change", updateGeoBtn);
+  fields.county?.addEventListener("change", () => {
+    updateGeoBtn();
+    updateAdvancedBadge();
+  });
   if (fields.product) {
     let pt = null;
     fields.product.addEventListener("input", () => {
@@ -859,24 +898,23 @@
   }
 
   el("btnAdvancedApply")?.addEventListener("click", () => {
-    triggerAdvancedSearch();
+    if (!validateRankFilter()) return;
+    saveFilterHistory();
+    updateAdvancedBadge();
+    window.dispatchEvent(new CustomEvent("advanced-search"));
   });
-  el("btnAdvancedReset")?.addEventListener("click", () => {
-    resetFilters();
-    document.querySelectorAll(".year-preset").forEach(btn => {
-      btn.classList.remove("is-active");
-    });
-  });
+  el("btnAdvancedReset")?.addEventListener("click", resetFilters);
 
   fields.unitRank?.addEventListener("change", () => {
     if (!fields.company?.value.trim()) return;
     if (!validateRankFilter()) return;
-    triggerAdvancedSearch();
+    window.dispatchEvent(new CustomEvent("advanced-search"));
   });
 
   initYearSelects();
   initProductCombo();
   initCompanyCombo();
+  renderFilterHistory();
   fields.yearFrom?.addEventListener("change", syncYearRange);
   fields.yearTo?.addEventListener("change", syncYearRange);
   document.querySelectorAll(".year-preset").forEach(btn => {
@@ -898,79 +936,29 @@
 
   btnBulk?.addEventListener("click", doBulkDownload);
   btnGeo?.addEventListener("click", doGeoDownload);
+  el("btnClearSelection")?.addEventListener("click", clearSelection);
+
+  Object.entries(fields).forEach(([key, f]) => {
+    if (!f) return;
+    f.addEventListener("change", updateAdvancedBadge);
+    if (key === "product" || key === "company") {
+      f.addEventListener("input", updateAdvancedBadge);
+    }
+  });
 
   updateGeoBtn();
-
-  async function applyAiFilters(filters) {
-    const f = filters || {};
-    resetFilters();
-    document.querySelectorAll(".year-preset.is-active").forEach(b => b.classList.remove("is-active"));
-
-    const qInput = document.getElementById("query");
-    if (qInput) qInput.value = f.q || "";
-
-    // 先加载省列表，再按省刷市/县
-    await loadFilters({});
-    if (f.province && fields.province) {
-      // 模糊匹配省名
-      const provOpts = [...(fields.province.options || [])];
-      const hitProv =
-        provOpts.find(o => o.value === f.province) ||
-        provOpts.find(o => o.value && (o.value.includes(f.province) || f.province.includes(o.value)));
-      if (hitProv) fields.province.value = hitProv.value;
-      else fields.province.value = f.province;
-      await loadFilters({ province: fields.province.value });
-    }
-    if (f.city && fields.city) {
-      const cityOpts = [...(fields.city.options || [])];
-      const hitCity =
-        cityOpts.find(o => o.value === f.city) ||
-        cityOpts.find(o => o.value && (o.value.includes(f.city) || f.city.includes(o.value)));
-      if (hitCity) fields.city.value = hitCity.value;
-      if (fields.city.value) {
-        await loadFilters({
-          province: fields.province?.value || f.province,
-          city: fields.city.value,
-        });
-      }
-    }
-    if (f.county && fields.county) {
-      const countyOpts = [...(fields.county.options || [])];
-      const hit =
-        countyOpts.find(o => o.value === f.county) ||
-        countyOpts.find(o => o.value && (o.value.includes(f.county) || f.county.includes(o.value)));
-      if (hit) fields.county.value = hit.value;
-    }
-
-    if (f.ex_state != null && fields.exState) fields.exState.value = String(f.ex_state);
-    if (fields.stdCategory) {
-      const cat = f.std_category || (f.std_type ? inferStdCategory(f.std_type) : "");
-      if (cat && [...fields.stdCategory.options].some(o => o.value === cat)) {
-        fields.stdCategory.value = cat;
-      }
-    }
-    if (f.product && fields.product) fields.product.value = f.product;
-    if (f.company && fields.company) fields.company.value = f.company;
-    if (f.unit_rank && fields.unitRank) fields.unitRank.value = String(f.unit_rank);
-    if (f.year_from && fields.yearFrom) fields.yearFrom.value = String(f.year_from);
-    if (f.year_to && fields.yearTo) fields.yearTo.value = String(f.year_to);
-
-    if (hasActiveFilters() && panel) {
-      panel.hidden = false;
-      btnToggle?.classList.add("active");
-    }
-    updateGeoBtn();
-  }
+  updateAdvancedBadge();
 
   window.AdvancedUI = {
     filterQuery,
     filterSummary,
     hasActiveFilters,
+    activeFilterCount,
     validateRankFilter,
     onResultsRendered,
     clearSelection,
     resetFilters,
-    applyAiFilters,
+    updateAdvancedBadge,
     isSelected: id => selected.has(Number(id)),
   };
 })();
