@@ -62,11 +62,18 @@ def sanitize_std_id_input(q: str) -> str:
 
 
 def chinese_core_text(q: str) -> str:
-    """食/品、食 品 -> 食品（仅保留汉字序列）。"""
-    chars = re.findall(r"[\u4e00-\u9fff]", q or "")
-    if len(chars) >= 2:
-        return "".join(chars)
+    """食/品、第3部分 -> 食品、第3部分（保留汉字与数字英文字母，去除标点和空格）。"""
+    s = re.sub(r"[^\w\u4e00-\u9fff]", "", q or "")
+    if len(s) >= 2:
+        return s
     return ""
+
+
+def _compact_text_sql_expr(column: str) -> str:
+    expr = column
+    for ch in (" ", "　", "：", ":", "—", "－", "-", "（", "）", "(", ")", "·", ".", "，", ",", "／", "/"):
+        expr = f"REPLACE({expr}, '{ch}', '')"
+    return expr
 
 
 def extract_std_id_fragments(q: str) -> list[str]:
@@ -98,10 +105,19 @@ def extract_text_keywords(q: str, *, std_ids: list[str] | None = None) -> list[s
 
     keywords: list[str] = []
     seen: set[str] = set()
+    
+    # 过滤掉作为独立关键词搜索时极度低效且匹配范围太广的无意义词
+    ignored_words = {
+        "部分", "方法", "规程", "规范", "技术", "系列", "条件", 
+        "指南", "要求", "标准", "测定", "试验", "确定", "测定方法",
+        "实施", "指南", "通用", "安全"
+    }
 
     def add(kw: str) -> None:
         kw = collapse_whitespace(kw)
         if len(kw) < 2:
+            return
+        if kw in ignored_words:
             return
         if looks_like_std_id(kw):
             return
@@ -223,19 +239,43 @@ def _append_std_id_match(
     args.append(f"{compact_key}%")
 
 
-def _append_text_match(parts: list[str], args: list[Any], kw: str, *, param: str) -> None:
-    like_pat = like_pattern(kw)
+def _append_text_match(parts: list[str], args: list[Any], kw: str, *, param: str, is_primary: bool = False) -> None:
+    kw_strip = collapse_whitespace(kw)
+    if not kw_strip:
+        return
+
+    like_pat = like_pattern(kw_strip)
     parts.append(f"b.std_chinesename LIKE {param}")
     args.append(like_pat)
-    
-    # 仅在关键词包含英文或数字时，才匹配标准号和文件名（避免纯中文关键字触发无谓的全文扫描与子查询）
-    if any(c.isalnum() and not '\u4e00' <= c <= '\u9fff' for c in kw):
+
+    if is_primary:
+        # 去除空格/标点的容错匹配
+        core = chinese_core_text(kw_strip)
+        if len(core) >= 2:
+            compact_expr = _compact_text_sql_expr("b.std_chinesename")
+            parts.append(f"{compact_expr} LIKE {param}")
+            args.append(f"%{core}%")
+
+        # 多词 AND 组合匹配：将输入按标点/空格拆分成多个词，全部用标准 LIKE 进行 AND 组合以利用索引
+        tokens = [t for t in re.split(r"[\s,，、;；:：+—\-/_／\(\)（）\.]+", kw_strip) if len(t) >= 2]
+        if len(tokens) > 1:
+            and_parts = []
+            for token in tokens:
+                and_parts.append(f"b.std_chinesename LIKE {param}")
+                args.append(f"%{token}%")
+            parts.append("(" + " AND ".join(and_parts) + ")")
+
+        # 仅在不含中文时才匹配文件名，避免全表嵌套扫描 std_filepath
+        if not re.search(r"[\u4e00-\u9fff]", kw_strip):
+            parts.append(
+                f"EXISTS (SELECT 1 FROM std_filepath f2 WHERE f2.base_id = b.id AND f2.file_name LIKE {param})"
+            )
+            args.append(f"%{kw_strip}%")
+
+    # 仅在关键词包含英文或数字时，匹配标准号
+    if any(c.isalnum() and not '\u4e00' <= c <= '\u9fff' for c in kw_strip):
         parts.append(f"UPPER(b.std_id) LIKE {param}")
-        args.append(f"%{kw.upper()}%")
-        parts.append(
-            f"EXISTS (SELECT 1 FROM std_filepath f2 WHERE f2.base_id = b.id AND UPPER(f2.file_name) LIKE {param})"
-        )
-        args.append(f"%{kw.upper()}%")
+        args.append(f"%{kw_strip.upper()}%")
 
 
 def build_keyword_match_clause(
@@ -252,18 +292,63 @@ def build_keyword_match_clause(
     parts: list[str] = []
     args: list[Any] = []
 
+    # 1. 匹配标准号部分 (std_ids)
     std_targets = intent.std_ids or ([intent.cleaned] if looks_like_std_id(intent.cleaned) else [])
     for std_q in std_targets[:3]:
         _append_std_id_match(parts, args, std_q, param=param, use_std_id_norm=use_std_id_norm)
 
-    text_targets = intent.text_keywords or (
-        [intent.cleaned] if intent.cleaned and not looks_like_std_id(intent.cleaned) else []
-    )
-    for kw in text_targets[:4]:
-        _append_text_match(parts, args, kw, param=param)
+    # 2. 提取除标准号外的文本部分
+    remainder = q
+    for frag in intent.std_ids:
+        remainder = re.sub(re.escape(frag), " ", remainder, flags=re.IGNORECASE)
+    remainder = remainder.strip()
+
+    if remainder:
+        # 分离纯文本中的空格和标点符号
+        tokens = [t for t in re.split(r"[\s,，、;；:：+—\-/_／\(\)（）\.]+", remainder) if len(t) >= 2]
+        compact_expr = _compact_text_sql_expr("b.std_chinesename")
+        core = chinese_core_text(remainder)
+
+        if len(tokens) > 1:
+            # 多词输入：1) 索引友好的 AND 组合过滤
+            and_parts = [f"b.std_chinesename LIKE {param}" for _ in tokens]
+            and_clause = "(" + " AND ".join(and_parts) + ")"
+            
+            # 2) 全文去空格/标点的容错精确匹配作为 OR 的一部分
+            if len(core) >= 2:
+                parts.append(f"({and_clause} OR {compact_expr} LIKE {param})")
+                args.extend(f"%{t}%" for t in tokens)
+                args.append(f"%{core}%")
+            else:
+                parts.append(and_clause)
+                args.extend(f"%{t}%" for t in tokens)
+        else:
+            # 单词/连在一起的输入 (如 "化妆品用原料积雪草提取物")
+            text_targets = intent.text_keywords or [remainder]
+            sub_parts = []
+            for kw in text_targets[:4]:
+                kw_strip = collapse_whitespace(kw)
+                if kw_strip:
+                    sub_parts.append(f"b.std_chinesename LIKE {param}")
+                    args.append(f"%{kw_strip}%")
+            
+            # 同样加入去除空格标点的大容错匹配条件
+            if len(core) >= 2:
+                sub_parts.append(f"{compact_expr} LIKE {param}")
+                args.append(f"%{core}%")
+                
+            if sub_parts:
+                parts.append("(" + " OR ".join(sub_parts) + ")")
+
+        # 3. 仅在不含中文时才匹配文件名，避免全表嵌套扫描 std_filepath
+        if not re.search(r"[\u4e00-\u9fff]", remainder):
+            parts.append(
+                f"EXISTS (SELECT 1 FROM std_filepath f2 WHERE f2.base_id = b.id AND f2.file_name LIKE {param})"
+            )
+            args.append(f"%{remainder}%")
 
     if not parts:
-        _append_text_match(parts, args, intent.cleaned or q, param=param)
+        _append_text_match(parts, args, intent.cleaned or q, param=param, is_primary=True)
 
     return "(" + " OR ".join(parts) + ")", args
 
@@ -274,12 +359,15 @@ def keyword_match_order_by(q: str, *, param: str = "?") -> tuple[str, list[Any]]
     if not primary:
         return "b.std_id", []
 
+    core = chinese_core_text(q)
     norm_key = std_id_norm_key(primary)
     compact_key = std_id_compact_key(primary)
     std_compact = _compact_sql_expr("b.std_id")
     like_pat = like_pattern(primary)
     flex_pat = flex_std_id_like_pattern(primary) if looks_like_std_id(primary) else like_pat
     text_like = f"%{primary}%"
+    core_like = f"%{core}%" if core else text_like
+    compact_expr = _compact_text_sql_expr("b.std_chinesename")
 
     order = (
         f"CASE "
@@ -292,7 +380,8 @@ def keyword_match_order_by(q: str, *, param: str = "?") -> tuple[str, list[Any]]
         f"WHEN UPPER(b.std_id) LIKE {param} THEN 6 "
         f"WHEN UPPER(b.std_id) LIKE {param} THEN 7 "
         f"WHEN b.std_chinesename LIKE {param} THEN 8 "
-        f"ELSE 9 END, b.std_id"
+        f"WHEN {compact_expr} LIKE {param} THEN 9 "
+        f"ELSE 10 END, b.std_id"
     )
     return order, [
         norm_key,
@@ -304,6 +393,7 @@ def keyword_match_order_by(q: str, *, param: str = "?") -> tuple[str, list[Any]]
         like_pat,
         flex_pat,
         text_like,
+        core_like,
     ]
 
 
@@ -313,12 +403,15 @@ def mysql_keyword_match_order_by(q: str) -> tuple[str, list[Any]]:
     if not primary:
         return "b.std_id", []
 
+    core = chinese_core_text(q)
     norm_key = std_id_norm_key(primary)
     compact_key = std_id_compact_key(primary)
     std_compact = _compact_sql_expr("b.std_id")
     like_pat = like_pattern(primary)
     flex_pat = flex_std_id_like_pattern(primary) if looks_like_std_id(primary) else like_pat
     text_like = f"%{primary}%"
+    core_like = f"%{core}%" if core else text_like
+    compact_expr = _compact_text_sql_expr("b.std_chinesename")
 
     order = (
         f"CASE "
@@ -330,7 +423,8 @@ def mysql_keyword_match_order_by(q: str) -> tuple[str, list[Any]]:
         f"WHEN UPPER(b.std_id) LIKE %s THEN 5 "
         f"WHEN UPPER(b.std_id) LIKE %s THEN 6 "
         f"WHEN b.std_chinesename LIKE %s THEN 7 "
-        f"ELSE 8 END, b.std_id"
+        f"WHEN {compact_expr} LIKE %s THEN 8 "
+        f"ELSE 9 END, b.std_id"
     )
     return order, [
         norm_key,
@@ -341,4 +435,5 @@ def mysql_keyword_match_order_by(q: str) -> tuple[str, list[Any]]:
         like_pat,
         flex_pat,
         text_like,
+        core_like,
     ]

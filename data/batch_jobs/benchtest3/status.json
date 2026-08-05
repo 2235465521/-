@@ -1,0 +1,1 @@
+{"id": "benchtest3", "status": "done", "phase": "finalize", "current": 1, "total": 1, "percent": 100, "message": "ok", "error": null, "summary": {"success": 1, "failed": 0}, "download_name": "bench.zip", "created_at": 9999999999.0, "file_ready": true, "file_taken": true}

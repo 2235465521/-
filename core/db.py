@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator
@@ -22,6 +23,7 @@ from core.search_query import (
     mysql_keyword_match_order_by,
 )
 from core.std_normalize import normalize_std_id, std_id_compact_key, std_id_norm_key
+from core.cache_manager import CacheManager
 
 EX_STATE_LABEL = {0: "废止", 1: "现行", 2: "即将实施"}
 
@@ -61,6 +63,7 @@ def _row_to_standard(row: dict, files: list[dict]) -> StandardInfo:
 class Database:
     def __init__(self) -> None:
         self._mysql_ok: bool | None = None
+        self._cache_manager = CacheManager()
 
     def _mysql_available(self) -> bool:
         if self._mysql_ok is not None:
@@ -103,6 +106,7 @@ class Database:
     @contextmanager
     def _sqlite(self):
         conn = sqlite3.connect(SQLITE_PATH)
+        self._ensure_indexes_sqlite(conn)
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -115,6 +119,19 @@ class Database:
         if SQLITE_PATH.is_file():
             return "SQLite"
         return "未就绪"
+
+    def _ensure_indexes_sqlite(self, conn) -> None:
+        """Create necessary indexes on SQLite tables for faster queries."""
+        # Index on standard base identifier fields
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_std_base_std_id ON std_base(std_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_std_base_std_id_norm ON std_base(std_id_norm)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_std_base_std_id_compact ON std_base(std_id_compact)")
+        # Index on file path table for base_id lookup
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_std_filepath_base_id ON std_filepath(base_id)")
+        # Additional indexes for ordering and filtering
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_std_base_release_date ON std_base(release_date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_std_base_std_type ON std_base(std_type)")
+        conn.commit()
 
     def is_ready(self) -> bool:
         return self._mysql_available() or SQLITE_PATH.is_file()
@@ -453,13 +470,40 @@ class Database:
         page = max(1, page)
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
+        # Cache lookup
+        cache_params = {"q": q, "page": page, "per_page": per_page, "pdf_only": pdf_only, "std_folder": std_folder}
+        cache_key = self._cache_manager.make_cache_key(cache_params)
+        cached = self._cache_manager.get_cached(cache_key)
+        if cached:
+            return cached
         if not q:
             return self._empty_page(page, per_page, "text")
+        # Perform the actual query
         if self._mysql_available():
-            return self._search_page_mysql(
+            result = self._search_page_mysql(
                 q, page, per_page, offset, pdf_only, std_folder
             )
-        return self._search_page_sqlite(q, page, per_page, offset, pdf_only, std_folder)
+        else:
+            result = self._search_page_sqlite(q, page, per_page, offset, pdf_only, std_folder)
+        # Store result in cache
+        self._cache_manager.set_cached(cache_key, result)
+        # Asynchronously preload next 1-2 pages
+        def _preload():
+            for next_page in range(page + 1, page + 3):
+                # Build cache key for the next page
+                next_params = {"q": q, "page": next_page, "per_page": per_page, "pdf_only": pdf_only, "std_folder": std_folder}
+                next_key = self._cache_manager.make_cache_key(next_params)
+                if self._cache_manager.get_cached(next_key) is None:
+                    next_offset = (next_page - 1) * per_page
+                    if self._mysql_available():
+                        next_res = self._search_page_mysql(
+                            q, next_page, per_page, next_offset, pdf_only, std_folder
+                        )
+                    else:
+                        next_res = self._search_page_sqlite(q, next_page, per_page, next_offset, pdf_only, std_folder)
+                    self._cache_manager.set_cached(next_key, next_res)
+        threading.Thread(target=_preload, daemon=True).start()
+        return result
 
     def browse_page(
         self,
@@ -473,13 +517,38 @@ class Database:
         page = max(1, page)
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
+        cache_params = {"action": "browse", "page": page, "per_page": per_page, "pdf_only": pdf_only, "std_folder": std_folder}
+        cache_key = self._cache_manager.make_cache_key(cache_params)
+        cached = self._cache_manager.get_cached(cache_key)
+        if cached:
+            return cached
+
         if self._mysql_available():
-            return self._browse_page_mysql(
+            result = self._browse_page_mysql(
                 page, per_page, offset, pdf_only, std_folder
             )
-        return self._browse_page_sqlite(
-            page, per_page, offset, pdf_only, std_folder
-        )
+        else:
+            result = self._browse_page_sqlite(
+                page, per_page, offset, pdf_only, std_folder
+            )
+
+        self._cache_manager.set_cached(cache_key, result)
+
+        # Asynchronously preload next 2 pages in background
+        def _preload():
+            for next_page in range(page + 1, page + 3):
+                next_params = {"action": "browse", "page": next_page, "per_page": per_page, "pdf_only": pdf_only, "std_folder": std_folder}
+                next_key = self._cache_manager.make_cache_key(next_params)
+                if self._cache_manager.get_cached(next_key) is None:
+                    next_offset = (next_page - 1) * per_page
+                    if self._mysql_available():
+                        next_res = self._browse_page_mysql(next_page, per_page, next_offset, pdf_only, std_folder)
+                    else:
+                        next_res = self._browse_page_sqlite(next_page, per_page, next_offset, pdf_only, std_folder)
+                    self._cache_manager.set_cached(next_key, next_res)
+        threading.Thread(target=_preload, daemon=True).start()
+
+        return result
 
     def _browse_page_sqlite(
         self,
@@ -709,6 +778,7 @@ class Database:
         std_folder: str | None = None,
         filters=None,
     ) -> dict:
+        """Search with advanced filters and cache the result."""
         from core.search_filters import AdvancedFilters, build_advanced_where
 
         q = (query or "").strip()
@@ -718,19 +788,54 @@ class Database:
         page = max(1, page)
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
+        # Cache lookup for advanced search
+        # Serialize filters to dict for key generation
+        try:
+            filter_dict = flt.__dict__
+        except Exception:
+            filter_dict = {}
+        cache_params = {"q": q, "page": page, "per_page": per_page, "pdf_only": pdf_only, "std_folder": std_folder, "filters": filter_dict}
+        cache_key = self._cache_manager.make_cache_key(cache_params)
+        cached = self._cache_manager.get_cached(cache_key)
+        if cached:
+            return cached
         from core.unit_geo import geo_index_ready, needs_geo_filter
 
         if needs_geo_filter(flt) and geo_index_ready():
-            return self._search_page_advanced_sqlite(
+            result = self._search_page_advanced_sqlite(
                 q, page, per_page, offset, pdf_only, std_folder, flt
             )
-        if self._mysql_available():
-            return self._search_page_advanced_mysql(
+        elif self._mysql_available():
+            result = self._search_page_advanced_mysql(
                 q, page, per_page, offset, pdf_only, std_folder, flt
             )
-        return self._search_page_advanced_sqlite(
-            q, page, per_page, offset, pdf_only, std_folder, flt
-        )
+        else:
+            result = self._search_page_advanced_sqlite(
+                q, page, per_page, offset, pdf_only, std_folder, flt
+            )
+        self._cache_manager.set_cached(cache_key, result)
+        # Asynchronously preload next pages for advanced search
+        def _preload_adv():
+            for next_page in range(page + 1, page + 3):
+                next_params = {"q": q, "page": next_page, "per_page": per_page, "pdf_only": pdf_only, "std_folder": std_folder, "filters": filter_dict}
+                next_key = self._cache_manager.make_cache_key(next_params)
+                if self._cache_manager.get_cached(next_key) is None:
+                    next_offset = (next_page - 1) * per_page
+                    if needs_geo_filter(flt) and geo_index_ready():
+                        next_res = self._search_page_advanced_sqlite(
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt
+                        )
+                    elif self._mysql_available():
+                        next_res = self._search_page_advanced_mysql(
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt
+                        )
+                    else:
+                        next_res = self._search_page_advanced_sqlite(
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt
+                        )
+                    self._cache_manager.set_cached(next_key, next_res)
+        threading.Thread(target=_preload_adv, daemon=True).start()
+        return result
 
     def _search_page_advanced_sqlite(
         self,
@@ -868,14 +973,15 @@ class Database:
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
         primary = (primary_keyword or kws[0]).strip()
-        if SQLITE_PATH.is_file():
-            return self._search_page_cluster_sqlite(
-                kws, primary, page, per_page, offset, pdf_only, std_folder
-            )
         if self._mysql_available():
             return self._search_page_cluster_mysql(
                 kws, primary, page, per_page, offset, pdf_only, std_folder
             )
+        if SQLITE_PATH.is_file():
+            return self._search_page_cluster_sqlite(
+                kws, primary, page, per_page, offset, pdf_only, std_folder
+            )
+        # Fallback to SQLite if neither backend is confirmed
         return self._search_page_cluster_sqlite(
             kws, primary, page, per_page, offset, pdf_only, std_folder
         )

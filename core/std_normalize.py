@@ -10,9 +10,9 @@ _STD_CORE = re.compile(
     r"^([A-Z]{1,6}(?:/[A-Z])?)\s*([\d]+(?:\.\d+)*)\s*[-－—]?\s*(\d{2,4})?\s*$",
     re.IGNORECASE,
 )
-# 紧凑写法：YDT1234-2020、GBT1002-2024
+# 紧凑写法：YDT1234-2020、GBT1002-2024、DB12T1462-2026
 _STD_COMPACT = re.compile(
-    r"^([A-Z]{2,5})([TZX])([\d]+(?:\.\d+)*)(?:[-－—](\d{2,4}))?$",
+    r"^([A-Z]{2,5}\d{0,2})([TZX])?([\d]+(?:\.\d+)*)(?:[-－—](\d{2,4}))?$",
     re.IGNORECASE,
 )
 
@@ -165,7 +165,14 @@ def filename_contains_std_id(filename: str, std_id: str) -> bool:
     sid_norm = normalize_std_id(std_id)
     if not sid_norm or len(sid_norm) < 4:
         return False
-    return sid_norm in fn_norm
+    if sid_norm in fn_norm:
+        return True
+    # Relaxed match: remove optional T/Z/X right after prefix (e.g. DB12T -> DB12, GBT -> GB)
+    fn_relaxed = re.sub(r"^([A-Z]{2,5}\d{0,2})[TZX]", r"\1", fn_norm)
+    sid_relaxed = re.sub(r"^([A-Z]{2,5}\d{0,2})[TZX]", r"\1", sid_norm)
+    if sid_relaxed and sid_relaxed in fn_relaxed:
+        return True
+    return False
 
 
 def std_id_glob_patterns(std_id: str) -> list[str]:
@@ -183,11 +190,14 @@ def std_id_glob_patterns(std_id: str) -> list[str]:
     compact = norm.replace("—", "-").replace("－", "-")
     m = _STD_COMPACT.match(compact)
     if m:
-        p1, p2, num, year = m.group(1), m.group(2), m.group(3), m.group(4) or ""
+        p1, p2, num, year = m.group(1), m.group(2) or "", m.group(3), m.group(4) or ""
         add(f"*{p1}{p2}*{num}*.pdf")
         add(f"*{p1}{p2} {num}*.pdf")
+        add(f"*{p1}*{num}*.pdf")
+        add(f"*{p1} {num}*.pdf")
         if year:
             add(f"*{p1}{p2}*{num}*{year}*.pdf")
+            add(f"*{p1}*{num}*{year}*.pdf")
             add(f"*{p1}{p2} {num}*{year}*.pdf")
             add(f"*{num}*{year}*.pdf")
     return patterns

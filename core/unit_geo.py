@@ -93,6 +93,7 @@ def _build_geo_where_mysql(
 ) -> tuple[str, list]:
     inner: list[str] = []
     args: list = []
+    has_area = bool(filters.province or filters.city or filters.county)
 
     if filters.province:
         inner.append(f"a.province_name = {param}")
@@ -111,18 +112,12 @@ def _build_geo_where_mysql(
         return "", []
 
     extra = " AND " + " AND ".join(inner)
-    area_join = """
-              SELECT ad.area_code FROM area_dict ad
-              WHERE u.area_code IS NOT NULL AND u.area_code != ''
-                AND (ad.area_code = u.area_code OR ad.area_code LIKE CONCAT(u.area_code, '%%'))
-              ORDER BY LENGTH(ad.area_code) DESC
-              LIMIT 1
-    """
+    area_join = "INNER JOIN area_dict a ON a.area_code = u.area_code" if has_area else ""
     sql = f"""
         EXISTS (
           SELECT 1 FROM std_unit_relation r
           INNER JOIN unit_dict u ON u.unit_id = r.unit_id
-          LEFT JOIN area_dict a ON a.area_code = ({area_join})
+          {area_join}
           WHERE r.base_id = b.id
             {extra}
         )

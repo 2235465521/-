@@ -189,17 +189,19 @@ def build_advanced_where(
             clauses.append(f"({or_parts})")
             args.extend([f"%{kw}%" for kw in kws])
 
+    cast_type = "SIGNED" if param == "%s" else "INTEGER"
+
     if filters.year_from is not None:
         clauses.append(
-            f"(CAST(substr(b.release_date, 1, 4) AS INTEGER) >= {param} "
-            f"OR CAST(substr(b.std_id, -4) AS INTEGER) >= {param})"
+            f"(CAST(substr(b.release_date, 1, 4) AS {cast_type}) >= {param} "
+            f"OR CAST(substr(b.std_id, -4) AS {cast_type}) >= {param})"
         )
         args.extend([filters.year_from, filters.year_from])
 
     if filters.year_to is not None:
         clauses.append(
-            f"(CAST(substr(b.release_date, 1, 4) AS INTEGER) <= {param} "
-            f"OR CAST(substr(b.std_id, -4) AS INTEGER) <= {param})"
+            f"(CAST(substr(b.release_date, 1, 4) AS {cast_type}) <= {param} "
+            f"OR CAST(substr(b.std_id, -4) AS {cast_type}) <= {param})"
         )
         args.extend([filters.year_to, filters.year_to])
 

@@ -7,6 +7,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+
 from flask import Flask, jsonify, request, send_file, send_from_directory
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -144,7 +145,7 @@ def api_search():
             return jsonify({"ok": True, "query": q, **data})
 
         if src == "tuangbiao":
-            if not q:
+            if not q and request.args.get("browse") != "1":
                 return jsonify({"ok": False, "error": "请输入团标名称或协会名关键词"}), 400
             if not tuangbiao.is_ready():
                 return jsonify(
@@ -373,6 +374,27 @@ def api_download_bulk():
     )
 
 
+@app.route("/api/std/batch_check")
+def api_std_batch_check():
+    try:
+        ids_str = request.args.get("ids") or ""
+        scan_disk = request.args.get("scan_disk", "0") != "0"
+        if not ids_str:
+            return jsonify({"ok": True, "results": {}})
+        ids = [int(x) for x in ids_str.split(",") if x.strip().isdigit()]
+        results = {}
+        for bid in ids:
+            std = db.get_by_id(bid)
+            if not std:
+                results[bid] = False
+                continue
+            files = collect_files_for_standard(std, scan_disk=scan_disk)
+            results[bid] = any(f.get("exists") for f in files)
+        return jsonify({"ok": True, "results": results})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/std/<int:base_id>")
 def api_std_detail(base_id: int):
     scan_disk = request.args.get("scan_disk", "1") != "0"
@@ -395,6 +417,10 @@ def api_download_file(file_id: int):
     )
     if not found or not found.is_file():
         return jsonify({"ok": False, "error": "磁盘上未找到 PDF 文件"}), 404
+    preview = request.args.get("preview", "0") == "1"
+    if preview:
+        mime = mimetypes.guess_type(found.name)[0] or "application/pdf"
+        return send_file(found, mimetype=mime, as_attachment=False)
     return send_file(found, as_attachment=True, download_name=found.name)
 
 
@@ -410,6 +436,10 @@ def api_download_std_disk(base_id: int, disk_index: int):
     path = Path(disk_files[disk_index]["resolved_path"])
     if not path.is_file():
         return jsonify({"ok": False, "error": "文件不存在"}), 404
+    preview = request.args.get("preview", "0") == "1"
+    if preview:
+        mime = mimetypes.guess_type(path.name)[0] or "application/pdf"
+        return send_file(path, mimetype=mime, as_attachment=False)
     return send_file(path, as_attachment=True, download_name=path.name)
 
 
@@ -418,6 +448,10 @@ def api_tuangbiao_download(file_id: int):
     path = tuangbiao.resolve_path(file_id)
     if not path:
         return jsonify({"ok": False, "error": "文件不存在或索引已过期"}), 404
+    preview = request.args.get("preview", "0") == "1"
+    if preview:
+        mime = mimetypes.guess_type(path.name)[0] or "application/pdf"
+        return send_file(path, mimetype=mime, as_attachment=False)
     return send_file(path, as_attachment=True, download_name=path.name)
 
 
@@ -426,7 +460,10 @@ def api_zhidu_download(file_id: int):
     path = zhidu.resolve_path(file_id)
     if not path:
         return jsonify({"ok": False, "error": "文件不存在或索引已过期"}), 404
+    preview = request.args.get("preview", "0") == "1"
     mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    if preview:
+        return send_file(path, mimetype=mime, as_attachment=False)
     return send_file(path, mimetype=mime, as_attachment=True, download_name=path.name)
 
 
@@ -538,6 +575,7 @@ def api_batch_preview():
 @app.route("/api/batch/download", methods=["POST"])
 def api_batch_download():
     scan_disk = request.args.get("scan_disk", "0") != "0"
+    only_pdf = request.args.get("only_pdf", "0") != "0"
     items: list[dict] = []
     original_data: bytes | None = None
     original_filename: str | None = None
@@ -558,10 +596,13 @@ def api_batch_download():
                 items = json.loads(form_items)
             except json.JSONDecodeError:
                 pass
+        if request.form.get("only_pdf"):
+            only_pdf = request.form.get("only_pdf") != "0"
     else:
         body = request.get_json(silent=True) or {}
         items = body.get("items") or []
         scan_disk = body.get("scan_disk", scan_disk)
+        only_pdf = body.get("only_pdf", only_pdf)
 
     if not items:
         return jsonify({"ok": False, "error": "无待下载条目"}), 400
@@ -572,6 +613,7 @@ def api_batch_download():
     buf, summary = build_zip_archive(
         items,
         scan_disk=scan_disk,
+        only_pdf=only_pdf,
         original_data=original_data,
         original_filename=original_filename,
         parse_meta=parse_meta,

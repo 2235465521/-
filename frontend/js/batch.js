@@ -17,9 +17,18 @@
   const batchSteps = el("batchSteps");
   const btnBatchBack = el("btnBatchBack");
 
+  // 新增控制元素
+  const btnBatchCancelPreview = el("btnBatchCancelPreview");
+  const btnSelectAllRows = el("btnSelectAllRows");
+  const btnSelectNoneRows = el("btnSelectNoneRows");
+  const btnSelectPdfOnlyRows = el("btnSelectPdfOnlyRows");
+
   let parsedItems = [];
   let parsedMeta = null;
   let previewMap = new Map();
+  let selectedRows = new Set();
+  let previewAbortController = null;
+  let downloadAbortController = null;
 
   function escapeHtml(s) {
     const d = document.createElement("div");
@@ -27,6 +36,7 @@
     return d.innerHTML;
   }
 
+  // 修改此处的 statusLabel 函数，将 not_found / no_pdf 显示得更精确
   function statusLabel(status) {
     const map = {
       ok: "可下载",
@@ -53,10 +63,40 @@
     });
   }
 
+  // 清除已上传的文件与状态
+  function clearUploadedFile() {
+    if (batchFile) batchFile.value = "";
+    parsedItems = [];
+    parsedMeta = null;
+    previewMap = new Map();
+    selectedRows.clear();
+    renderTable();
+    setStep(1);
+    setFeedback("");
+    if (btnBatchPreview) btnBatchPreview.disabled = true;
+    if (btnBatchDownload) btnBatchDownload.disabled = true;
+    setFileName("");
+  }
+
+  // 显示当前操作文件的名称
   function setFileName(name) {
     if (!batchFileName) return;
-    batchFileName.textContent = name || "未选择文件";
-    batchFileName.classList.toggle("has-file", !!name);
+    if (name) {
+      batchFileName.innerHTML = `${escapeHtml(name)} <button type="button" class="btn-clear-file" id="btnClearFile" title="删除已上传文件" onclick="event.stopPropagation(); event.preventDefault();">&times;</button>`;
+      batchFileName.classList.add("has-file");
+      
+      const btn = el("btnClearFile");
+      if (btn) {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          clearUploadedFile();
+        });
+      }
+    } else {
+      batchFileName.textContent = "未选择文件";
+      batchFileName.classList.remove("has-file");
+    }
   }
 
   function showTableSection(show) {
@@ -86,23 +126,51 @@
     if (btnBatchParse) btnBatchParse.disabled = busy;
     if (btnBatchPreview) btnBatchPreview.disabled = busy || !parsedItems.length;
     if (btnBatchDownload) btnBatchDownload.disabled = busy || !parsedItems.length;
+    if (btnBatchCancelPreview) {
+      if (busy && previewAbortController) {
+        btnBatchCancelPreview.textContent = "取消预览";
+        btnBatchCancelPreview.style.display = "inline-block";
+      } else if (busy && downloadAbortController) {
+        btnBatchCancelPreview.textContent = "取消下载";
+        btnBatchCancelPreview.style.display = "inline-block";
+      } else {
+        btnBatchCancelPreview.style.display = "none";
+      }
+    }
+  }
+
+  function updateDownloadCounters() {
+    const cntDlAll = el("cntDlAll");
+    const cntDlPdf = el("cntDlPdf");
+    const cntDlSelected = el("cntDlSelected");
+    if (cntDlAll) cntDlAll.textContent = parsedItems.length;
+    let pdfCount = 0;
+    parsedItems.forEach(it => {
+      const prev = previewMap.get(it.row);
+      if (prev && prev.status === "ok") pdfCount++;
+    });
+    if (cntDlPdf) cntDlPdf.textContent = pdfCount;
+    if (cntDlSelected) cntDlSelected.textContent = selectedRows.size;
   }
 
   function renderTable() {
     if (!batchTableWrap) return;
-    if (!parsedItems.length) {
+    if (!parsedItems.length || previewMap.size === 0) {
       batchTableWrap.innerHTML = "";
       showTableSection(false);
       return;
     }
     showTableSection(true);
     let html = `<table class="batch-table"><thead><tr>
+      <th style="width:40px;text-align:center;"><input type="checkbox" id="chkBatchSelectAll" checked title="全选 / 全不选"></th>
       <th>行</th><th>标准号</th><th>标准名</th><th>PDF</th><th>状态</th>
     </tr></thead><tbody>`;
     parsedItems.forEach(it => {
       const prev = previewMap.get(it.row);
       const st = prev?.status || "—";
+      const checked = selectedRows.has(it.row) ? "checked" : "";
       html += `<tr>
+        <td style="text-align:center;"><input type="checkbox" class="batch-row-chk" data-row="${it.row}" ${checked}></td>
         <td>${it.row}</td>
         <td>${escapeHtml(it.query)}</td>
         <td class="batch-name">${escapeHtml(prev?.std_chinesename || it.name_hint || "—")}</td>
@@ -112,6 +180,40 @@
     });
     html += "</tbody></table>";
     batchTableWrap.innerHTML = html;
+
+    const chkAll = el("chkBatchSelectAll");
+    if (chkAll) {
+      const allSelected = parsedItems.length > 0 && parsedItems.every(it => selectedRows.has(it.row));
+      chkAll.checked = allSelected;
+      chkAll.addEventListener("change", (e) => {
+        const isChecked = e.target.checked;
+        parsedItems.forEach(it => {
+          if (isChecked) selectedRows.add(it.row);
+          else selectedRows.delete(it.row);
+        });
+        document.querySelectorAll(".batch-row-chk").forEach(chk => {
+          chk.checked = isChecked;
+        });
+        updateDownloadCounters();
+      });
+    }
+
+    document.querySelectorAll(".batch-row-chk").forEach(chk => {
+      chk.addEventListener("change", (e) => {
+        const row = Number(e.target.dataset.row);
+        if (e.target.checked) {
+          selectedRows.add(row);
+        } else {
+          selectedRows.delete(row);
+        }
+        if (chkAll) {
+          chkAll.checked = parsedItems.every(it => selectedRows.has(it.row));
+        }
+        updateDownloadCounters();
+      });
+    });
+
+    updateDownloadCounters();
   }
 
   async function doParse() {
@@ -123,7 +225,16 @@
     setFileName(file.name);
     setBusy(true);
     previewMap = new Map();
-    setFeedback('<div class="loading"><div class="spinner"></div>正在解析 Excel…</div>');
+    selectedRows.clear();
+    setFeedback('<div class="loading"><div class="spinner"></div><div class="loading-msg">正在解析 Excel…</div></div>');
+    
+    const parseTimeoutId = setTimeout(() => {
+      const msgEl = batchFeedback?.querySelector(".loading-msg");
+      if (msgEl) {
+        msgEl.innerHTML = `正在解析 Excel…<br><span class="loading-warn-text">⚠️ 响应较慢，可能由于文件较多或系统繁忙，请耐心等候...</span>`;
+      }
+    }, 5000);
+
     const fd = new FormData();
     fd.append("file", file);
     try {
@@ -138,18 +249,21 @@
       }
       parsedItems = data.items || [];
       parsedMeta = data.meta || null;
+      selectedRows = new Set(parsedItems.map(it => it.row));
+      
       const trunc = parsedMeta?.truncated ? `（已达上限 ${parsedMeta.max_rows} 条）` : "";
       setMeta(`已识别 ${parsedItems.length} 条标准号${trunc}`);
       renderTable();
       setStep(2);
       setFeedback(
-        '<div class="batch-hint">解析完成。可先「预览匹配」，再「下载 ZIP」。后端将自动从 E 盘标准库查找 PDF，未找到项在 Excel 备注中填「否」。</div>'
+        `<div class="batch-hint">✅ 文件解析成功，共识别出 <strong>${parsedItems.length}</strong> 条数据${trunc}。<br/>👉 请点击上方的「<strong>预览匹配</strong>」按钮查看检索匹配结果，或直接点击「<strong>下载 ZIP</strong>」。</div>`
       );
       if (btnBatchPreview) btnBatchPreview.disabled = false;
       if (btnBatchDownload) btnBatchDownload.disabled = false;
     } catch (e) {
       setFeedback(`<div class="alert">解析失败：${escapeHtml(e.message || "未知错误")}</div>`);
     } finally {
+      clearTimeout(parseTimeoutId);
       setBusy(false);
     }
   }
@@ -159,12 +273,38 @@
       setFeedback('<div class="alert">请先解析 Excel</div>');
       return;
     }
+    // 如果已经有预览缓存，则直接展示结果并还原复选状态，避免重新请求和重新加载
+    if (previewMap.size > 0) {
+      showTableSection(true);
+      renderTable();
+      setStep(3);
+      const total = parsedItems.length;
+      let success = 0;
+      previewMap.forEach(v => {
+        if (v.status === "ok") success++;
+      });
+      const failed = total - success;
+      setFeedback(
+        `<div class="batch-hint">预览完成：共 ${total} 条，预计可下载 <strong>${success}</strong> 个 PDF，失败 ${failed} 条。</div>`
+      );
+      return;
+    }
+    previewAbortController = new AbortController();
     setBusy(true);
-    setFeedback('<div class="loading"><div class="spinner"></div>正在匹配标准（预览）…</div>');
+    setFeedback('<div class="loading"><div class="spinner"></div><div class="loading-msg">正在匹配标准（预览）…</div></div>');
+    
+    const previewTimeoutId = setTimeout(() => {
+      const msgEl = batchFeedback?.querySelector(".loading-msg");
+      if (msgEl) {
+        msgEl.innerHTML = `正在匹配标准（预览）…<br><span class="loading-warn-text">⚠️ 响应较慢，可能由于文件过大或系统繁忙，请耐心等候...</span>`;
+      }
+    }, 5000);
+
     try {
       const res = await fetch("/api/batch/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: previewAbortController.signal,
         body: JSON.stringify({
           items: parsedItems,
           scan_disk: batchScanDisk?.checked === true,
@@ -187,8 +327,14 @@
         `<div class="batch-hint">预览完成：共 ${s.total} 条，预计可下载 <strong>${s.success}</strong> 个 PDF，失败 ${s.failed} 条。</div>`
       );
     } catch (e) {
-      setFeedback(`<div class="alert">预览失败：${escapeHtml(e.message || "未知错误")}</div>`);
+      if (e.name === "AbortError") {
+        setFeedback('<div class="batch-hint">已取消匹配预览。已解析项依然保留，可重新发起或直接打包下载。</div>');
+      } else {
+        setFeedback(`<div class="alert">预览失败：${escapeHtml(e.message || "未知错误")}</div>`);
+      }
     } finally {
+      previewAbortController = null;
+      clearTimeout(previewTimeoutId);
       setBusy(false);
     }
   }
@@ -203,16 +349,50 @@
       setFeedback('<div class="alert">请重新选择 Excel 文件后再下载</div>');
       return;
     }
+
+    const scope = document.querySelector('input[name="batchDlScope"]:checked')?.value || "all";
+    let downloadItems = parsedItems;
+    let onlyPdf = false;
+
+    if (scope === "only_pdf") {
+      onlyPdf = true;
+      if (previewMap.size > 0) {
+        downloadItems = parsedItems.filter(it => previewMap.get(it.row)?.status === "ok");
+      }
+      if (downloadItems.length === 0) {
+        setFeedback('<div class="alert">未检索到任何包含有效 PDF 的标准，无法打包下载</div>');
+        return;
+      }
+    } else if (scope === "selected") {
+      downloadItems = parsedItems.filter(it => selectedRows.has(it.row));
+      if (downloadItems.length === 0) {
+        setFeedback('<div class="alert">请先在预览表格中勾选要下载的行</div>');
+        return;
+      }
+    }
+
+    downloadAbortController = new AbortController();
     setBusy(true);
-    setFeedback('<div class="loading"><div class="spinner"></div>正在匹配标准并打包 ZIP，请稍候…</div>');
+    setFeedback('<div class="loading"><div class="spinner"></div><div class="loading-msg">正在匹配标准并打包 ZIP，请稍候…</div></div>');
+    
+    const downloadTimeoutId = setTimeout(() => {
+      const msgEl = batchFeedback?.querySelector(".loading-msg");
+      if (msgEl) {
+        msgEl.innerHTML = `正在匹配标准并打包 ZIP，请稍候…<br><span class="loading-warn-text">⚠️ 正在匹配并打包中，如果文件过大或系统繁忙请耐心等候...</span>`;
+      }
+    }, 5000);
+
     try {
       const scan = batchScanDisk?.checked === true;
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("items", JSON.stringify(parsedItems));
-      const res = await fetch(`/api/batch/download?scan_disk=${scan ? "1" : "0"}`, {
+      fd.append("items", JSON.stringify(downloadItems));
+      fd.append("only_pdf", onlyPdf ? "1" : "0");
+      
+      const res = await fetch(`/api/batch/download?scan_disk=${scan ? "1" : "0"}&only_pdf=${onlyPdf ? "1" : "0"}`, {
         method: "POST",
         body: fd,
+        signal: downloadAbortController.signal,
       });
       const ctype = res.headers.get("content-type") || "";
       if (!res.ok) {
@@ -245,8 +425,14 @@
       );
       setStep(3);
     } catch (e) {
-      setFeedback(`<div class="alert">下载失败：${escapeHtml(e.message || "未知错误")}</div>`);
+      if (e.name === "AbortError") {
+        setFeedback('<div class="batch-hint">已取消打包下载。</div>');
+      } else {
+        setFeedback(`<div class="alert">下载失败：${escapeHtml(e.message || "未知错误")}</div>`);
+      }
     } finally {
+      downloadAbortController = null;
+      clearTimeout(downloadTimeoutId);
       setBusy(false);
     }
   }
@@ -279,6 +465,7 @@
       parsedItems = [];
       parsedMeta = null;
       previewMap = new Map();
+      selectedRows.clear();
       renderTable();
       setStep(1);
       if (btnBatchPreview) btnBatchPreview.disabled = true;
@@ -309,6 +496,54 @@
       window.location.href = "/api/batch/template";
     });
   }
+
+  if (btnBatchCancelPreview) {
+    btnBatchCancelPreview.addEventListener("click", () => {
+      if (previewAbortController) {
+        previewAbortController.abort();
+      }
+      if (downloadAbortController) {
+        downloadAbortController.abort();
+      }
+    });
+  }
+
+  if (btnSelectAllRows) {
+    btnSelectAllRows.addEventListener("click", () => {
+      parsedItems.forEach(it => selectedRows.add(it.row));
+      renderTable();
+    });
+  }
+
+  if (btnSelectNoneRows) {
+    btnSelectNoneRows.addEventListener("click", () => {
+      selectedRows.clear();
+      renderTable();
+    });
+  }
+
+  if (btnSelectPdfOnlyRows) {
+    btnSelectPdfOnlyRows.addEventListener("click", () => {
+      selectedRows.clear();
+      parsedItems.forEach(it => {
+        const prev = previewMap.get(it.row);
+        if (prev && prev.status === "ok") {
+          selectedRows.add(it.row);
+        }
+      });
+      renderTable();
+      const radioSelected = document.querySelector('input[name="batchDlScope"][value="selected"]');
+      if (radioSelected) radioSelected.checked = true;
+    });
+  }
+
+  // Radio button change listener to render updates
+  document.querySelectorAll('input[name="batchDlScope"]').forEach(radio => {
+    radio.addEventListener("change", () => {
+      updateDownloadCounters();
+    });
+  });
+
   if (btnBatchParse) btnBatchParse.addEventListener("click", doParse);
   if (btnBatchPreview) btnBatchPreview.addEventListener("click", doPreview);
   if (btnBatchDownload) btnBatchDownload.addEventListener("click", doDownload);

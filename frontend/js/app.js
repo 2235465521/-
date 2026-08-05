@@ -11,6 +11,9 @@
   const btnSearch = document.getElementById("btnSearch");
   const historyWrap = document.getElementById("historyWrap");
   const historyChips = document.getElementById("historyChips");
+  const historyMoreBtn = document.getElementById("historyMoreBtn");
+  const historyDropdownPanel = document.getElementById("historyDropdownPanel");
+  const historyMoreChips = document.getElementById("historyMoreChips");
   const productBanner = document.getElementById("productBanner");
   const productClusterList = document.getElementById("productClusterList");
   const pageTitle = document.getElementById("pageTitle");
@@ -54,6 +57,21 @@
     batch: "",
   };
 
+  const searchPageCache = new Map();
+  const MAX_CACHE_ENTRIES = 100;
+
+  function getPageCacheKey(mode, page, query, extraParams = "") {
+    return `${mode}:${page}:${query}:${extraParams}`;
+  }
+
+  function setPageCache(key, data) {
+    if (searchPageCache.size >= MAX_CACHE_ENTRIES) {
+      const firstKey = searchPageCache.keys().next().value;
+      searchPageCache.delete(firstKey);
+    }
+    searchPageCache.set(key, data);
+  }
+
   function syncClearBtn() {
     if (!btnSearchClear || !input) return;
     btnSearchClear.hidden = !input.value.trim();
@@ -63,8 +81,11 @@
     if (!input) return;
     input.value = "";
     modeQueries[currentMode] = "";
+    if (currentMode in modeResults) {
+      modeResults[currentMode] = null;
+    }
     syncClearBtn();
-    if (currentMode === "search") loadDefaultResults();
+    if (currentMode === "search" || currentMode === "tuangbiao") loadDefaultResults();
     else if (results) results.innerHTML = "";
     input.focus();
   }
@@ -128,58 +149,138 @@
     return `${v.toFixed(i ? 1 : 0)} ${u[i]}`;
   }
 
+  function getHistoryKey(mode) {
+    if (mode === "tuangbiao") return "pdf_tuangbiao_history_v1";
+    if (mode === "product") return "pdf_product_history_v1";
+    return "pdf_search_history_v1";
+  }
+
   function loadHistory() {
     try {
-      return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      const key = getHistoryKey(currentMode);
+      return JSON.parse(localStorage.getItem(key) || "[]");
     } catch {
       return [];
     }
   }
 
+  const VISIBLE_CHIPS_LIMIT = 5;
+
   function saveHistory(q) {
     const text = (q || "").trim();
     if (!text) return;
+    const key = getHistoryKey(currentMode);
     let list = loadHistory().filter(x => x !== text);
     list.unshift(text);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, 8)));
+    localStorage.setItem(key, JSON.stringify(list.slice(0, 30)));
+    renderHistory();
+  }
+
+  function deleteHistory(q) {
+    const text = (q || "").trim();
+    if (!text) return;
+    const key = getHistoryKey(currentMode);
+    let list = loadHistory().filter(x => x !== text);
+    localStorage.setItem(key, JSON.stringify(list));
     renderHistory();
   }
 
   function renderHistory() {
     if (!historyWrap || !historyChips) return;
-    if (currentMode !== "search") {
+    if (currentMode !== "search" && currentMode !== "tuangbiao" && currentMode !== "product") {
       historyWrap.classList.add("empty");
       historyWrap.hidden = true;
+      if (historyDropdownPanel) historyDropdownPanel.hidden = true;
+      if (historyMoreBtn) historyMoreBtn.classList.remove("open");
       return;
     }
-    historyWrap.hidden = false;
     const list = loadHistory();
     if (!list.length) {
       historyWrap.classList.add("empty");
+      historyWrap.hidden = true;
       historyChips.innerHTML = "";
+      if (historyMoreChips) historyMoreChips.innerHTML = "";
+      if (historyMoreBtn) historyMoreBtn.hidden = true;
+      if (historyDropdownPanel) historyDropdownPanel.hidden = true;
+      if (historyMoreBtn) historyMoreBtn.classList.remove("open");
       return;
     }
+    historyWrap.hidden = false;
     historyWrap.classList.remove("empty");
-    historyChips.innerHTML = list
-      .map(
-        q =>
-          `<button type="button" class="chip" data-q="${escapeHtml(q)}"><span class="chip-text">${escapeHtml(q)}</span></button>`
-      )
-      .join("");
-    historyChips.querySelectorAll(".chip").forEach(chip => {
-      chip.addEventListener("click", () => {
-        if (input) input.value = chip.dataset.q || "";
-        syncClearBtn();
-        doSearch(1);
+
+    const mainList = list.slice(0, VISIBLE_CHIPS_LIMIT);
+    const extraList = list.slice(VISIBLE_CHIPS_LIMIT);
+
+    const renderChipHtml = (q) => `
+      <div class="chip" data-q="${escapeHtml(q)}">
+        <span class="chip-text" title="检索 ${escapeHtml(q)}">${escapeHtml(q)}</span>
+        <button type="button" class="chip-del" data-q="${escapeHtml(q)}" title="删除此记录" aria-label="删除记录">×</button>
+      </div>`;
+
+    historyChips.innerHTML = mainList.map(renderChipHtml).join("");
+
+    if (historyMoreChips && historyMoreBtn) {
+      if (extraList.length > 0) {
+        historyMoreChips.innerHTML = extraList.map(renderChipHtml).join("");
+        historyMoreBtn.hidden = false;
+      } else {
+        historyMoreChips.innerHTML = "";
+        historyMoreBtn.hidden = true;
+        if (historyDropdownPanel) historyDropdownPanel.hidden = true;
+        historyMoreBtn.classList.remove("open");
+      }
+    }
+
+    const bindChipEvents = (container) => {
+      if (!container) return;
+      container.querySelectorAll(".chip").forEach(chip => {
+        chip.querySelector(".chip-text")?.addEventListener("click", () => {
+          if (input) input.value = chip.dataset.q || "";
+          syncClearBtn();
+          if (historyDropdownPanel) historyDropdownPanel.hidden = true;
+          if (historyMoreBtn) historyMoreBtn.classList.remove("open");
+          doSearch(1);
+        });
+        chip.querySelector(".chip-del")?.addEventListener("click", (e) => {
+          e.stopPropagation();
+          deleteHistory(chip.dataset.q || "");
+        });
       });
+    };
+
+    bindChipEvents(historyChips);
+    if (historyMoreChips) bindChipEvents(historyMoreChips);
+  }
+
+  if (historyMoreBtn && historyDropdownPanel) {
+    historyMoreBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isOpen = !historyDropdownPanel.hidden;
+      historyDropdownPanel.hidden = isOpen;
+      historyMoreBtn.classList.toggle("open", !isOpen);
+    });
+
+    document.addEventListener("click", (e) => {
+      if (historyWrap && !historyWrap.contains(e.target)) {
+        if (historyDropdownPanel) historyDropdownPanel.hidden = true;
+        if (historyMoreBtn) historyMoreBtn.classList.remove("open");
+      }
     });
   }
+
+  const modeResults = {
+    search: null,
+    product: null,
+    tuangbiao: null,
+  };
 
   function setMode(mode) {
     if (mode !== currentMode) {
       persistModeQuery();
     }
     currentMode = mode;
+    restoreModeQuery(mode);
+
     if (!mainArea) return;
     mainArea.classList.remove(
       "mode-search",
@@ -203,7 +304,6 @@
     });
 
     applyModeUi(mode);
-    restoreModeQuery(mode);
     syncClearBtn();
   }
 
@@ -219,7 +319,7 @@
     const btnAdvanced = document.getElementById("btnAdvancedToggle");
     if (searchPanel) searchPanel.hidden = !searchLike && mode !== "batch";
     if (searchPanel && searchLike) searchPanel.hidden = false;
-    if (historyWrap) historyWrap.hidden = mode !== "search";
+    if (historyWrap) historyWrap.hidden = mode !== "search" && mode !== "tuangbiao" && mode !== "product";
     if (results) results.hidden = mode === "batch";
     if (batchStage) batchStage.hidden = mode !== "batch";
     if (searchTools) {
@@ -267,7 +367,33 @@
     if (mode === "batch" && batchStage) batchStage.style.display = "flex";
     window.AdvancedUI?.clearSelection?.();
     renderHistory();
-    if (mode === "search") loadDefaultResults();
+
+    // Restore results specifically for the active mode
+    if (mode in modeResults) {
+      if (modeResults[mode]) {
+        renderItems(modeResults[mode]);
+      } else if (mode === "search" || mode === "tuangbiao") {
+        const q = (input?.value || "").trim();
+        if (!q && mode === "search" && !window.AdvancedUI?.hasActiveFilters?.()) {
+          loadDefaultResults();
+        } else if (!q && mode === "tuangbiao") {
+          loadDefaultResults();
+        } else {
+          doSearch(1);
+        }
+      } else {
+        const hints = {
+          product: "输入产品名查看同类标准",
+        };
+        if (results && mode !== "batch") {
+          results.innerHTML = `<div class="empty-state">
+            <div class="empty-icon" aria-hidden="true">✏️</div>
+            <p class="empty-title">${escapeHtml(hints[mode] || "请输入关键词")}</p>
+            <p class="empty-desc">在上方搜索框输入内容后按回车或点击检索</p>
+          </div>`;
+        }
+      }
+    }
   }
 
   document.querySelectorAll("[data-mode-switch]").forEach(btn => {
@@ -280,9 +406,6 @@
         return;
       }
       setMode(mode);
-      if (results && mode !== "batch" && mode !== "search") {
-        results.innerHTML = "";
-      }
     });
   });
 
@@ -324,14 +447,19 @@
         `<button type="button" class="pager-num${p === data.page ? " active" : ""}" data-page="${p}">${p}</button>`
       );
     }
-    const from = data.total ? (data.page - 1) * data.per_page + 1 : 0;
-    const to = Math.min(data.page * data.per_page, data.total);
     return `<div class="pager">
-      <span class="pager-info">显示 ${from} 至 ${to} 项，共 ${data.total} 项</span>
       <div class="pager-pages">
-        <button type="button" id="pgPrev" ${data.page <= 1 ? "disabled" : ""} aria-label="上一页">‹</button>
+        <button type="button" id="pgFirst" ${data.page <= 1 ? "disabled" : ""} title="首页（最头页）" aria-label="首页">«</button>
+        <button type="button" id="pgPrev" ${data.page <= 1 ? "disabled" : ""} title="上一页" aria-label="上一页">‹</button>
         ${pages.join("")}
-        <button type="button" id="pgNext" ${data.page >= data.total_pages ? "disabled" : ""} aria-label="下一页">›</button>
+        <button type="button" id="pgNext" ${data.page >= data.total_pages ? "disabled" : ""} title="下一页" aria-label="下一页">›</button>
+        <button type="button" id="pgLast" ${data.page >= data.total_pages ? "disabled" : ""} title="尾页（最底页）" aria-label="尾页">»</button>
+        <div class="pager-jump">
+          <span>跳至</span>
+          <input type="number" id="pgJumpInput" class="pg-jump-input" min="1" max="${data.total_pages}" value="${data.page}" />
+          <span>/ ${data.total_pages} 页</span>
+          <button type="button" id="pgJumpBtn" class="pg-jump-btn">跳转</button>
+        </div>
       </div>
     </div>`;
   }
@@ -364,6 +492,7 @@
             : f.id
               ? `/api/download/${f.id}`
               : "#");
+        const previewHref = href && href !== "#" ? href + (href.includes("?") ? "&preview=1" : "?preview=1") : "";
         const icon = catalogHref ? fileExtIcon(f.file_ext) : "PDF";
         const meta = [
           f.file_size ? fmtSize(f.file_size) : "",
@@ -379,11 +508,16 @@
               <div class="file-name">${escapeHtml(f.file_name || "—")}</div>
               <div class="file-meta">${escapeHtml(meta || "—")}</div>
             </div>
-            ${
-              f.exists
-                ? `<a class="btn-dl" href="${href}" download>下载</a>`
-                : `<span class="btn-dl disabled">无文件</span>`
-            }
+            <div class="file-actions">
+              ${f.exists
+            ? `<button type="button" class="btn-preview" data-preview-url="${previewHref}" data-filename="${escapeHtml(f.file_name || item.std_id || 'PDF 预览')}" data-download-url="${href}">
+                       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:2px;vertical-align:-2px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                       预览
+                     </button>
+                     <a class="btn-dl" href="${href}" download>下载</a>`
+            : `<span class="btn-dl disabled">无文件</span>`
+          }
+            </div>
           </div>`;
       })
       .join("");
@@ -408,7 +542,14 @@
       detailRow.dataset.loaded = "1";
       return;
     }
-    cell.innerHTML = '<div class="loading"><div class="spinner"></div>正在加载 PDF 详情…</div>';
+    cell.innerHTML = '<div class="loading"><div class="spinner"></div><div class="loading-msg">正在加载 PDF 详情…</div></div>';
+    const detailTimeoutId = setTimeout(() => {
+      const msgEl = cell.querySelector(".loading-msg");
+      if (msgEl) {
+        msgEl.innerHTML = `正在加载 PDF 详情…<br><span class="loading-warn-text">响应较慢，可能由于网络延迟或系统繁忙，正在努力读取，请耐心等候...</span>`;
+      }
+    }, 5000);
+
     try {
       const scan = scanDiskEnabled();
       const res = await fetch(`/api/std/${id}?scan_disk=${scan ? "1" : "0"}`);
@@ -432,10 +573,15 @@
       }
     } catch (e) {
       cell.innerHTML = `<div class="alert">${escapeHtml(e.message || "加载失败")}</div>`;
+    } finally {
+      clearTimeout(detailTimeoutId);
     }
   }
 
   function renderItems(data) {
+    if (currentMode in modeResults) {
+      modeResults[currentMode] = data;
+    }
     const items = data.items || [];
 
     if (data.resolved && productBanner && currentMode === "product") {
@@ -454,7 +600,7 @@
       results.innerHTML = `<div class="empty-state">
         <div class="empty-icon" aria-hidden="true">🔍</div>
         <p class="empty-title">未找到匹配结果</p>
-        <p class="empty-desc">试试缩短关键词，或调整高级筛选条件后重新检索</p>
+        <p class="empty-desc">请重新输入有效检索词</p>
       </div>`;
       return;
     }
@@ -499,11 +645,10 @@
               <span class="status-pill ${hasFile ? "pdf-yes" : "pdf-no"}" style="margin-left:0.25rem">${hasFile ? (isCatalogMode(currentMode) ? "有文件" : "PDF") : "无PDF"}</span>
             </td>
             <td class="col-action">
-              ${
-                dlHref
-                  ? `<a class="btn-row-dl" href="${dlHref}" download title="下载" onclick="event.stopPropagation()">↓</a>`
-                  : `<span class="btn-row-dl disabled">↓</span>`
-              }
+              ${dlHref
+            ? `<a class="btn-row-dl" href="${dlHref}" download title="下载" onclick="event.stopPropagation()">↓</a>`
+            : `<span class="btn-row-dl disabled">↓</span>`
+          }
             </td>
           </tr>
           <tr class="result-detail-row" data-for="${item.id}" style="display:none">
@@ -530,40 +675,126 @@
       });
     });
 
+    document.getElementById("pgFirst")?.addEventListener("click", () => doSearch(1));
     document.getElementById("pgPrev")?.addEventListener("click", () => doSearch(data.page - 1));
     document.getElementById("pgNext")?.addEventListener("click", () => doSearch(data.page + 1));
+    document.getElementById("pgLast")?.addEventListener("click", () => doSearch(data.total_pages));
     results.querySelectorAll(".pager-num").forEach(btn => {
       btn.addEventListener("click", () => doSearch(Number(btn.dataset.page)));
     });
 
+    const handleJump = () => {
+      const inputEl = document.getElementById("pgJumpInput");
+      if (!inputEl) return;
+      let targetPage = parseInt(inputEl.value, 10);
+      if (isNaN(targetPage)) return;
+      targetPage = Math.max(1, Math.min(data.total_pages, targetPage));
+      doSearch(targetPage);
+    };
+
+    document.getElementById("pgJumpBtn")?.addEventListener("click", handleJump);
+    document.getElementById("pgJumpInput")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleJump();
+      }
+    });
+
+    // Batch check PDFs on disk in the background (extremely responsive)
+    if (!isCatalogMode(currentMode) && items.length > 0) {
+      const ids = items.map(it => it.id).join(",");
+      const scan = scanDiskEnabled() ? "1" : "0";
+      fetch(`/api/std/batch_check?ids=${ids}&scan_disk=${scan}`)
+        .then(res => res.json())
+        .then(resData => {
+          if (resData.ok && resData.results) {
+            Object.keys(resData.results).forEach(id => {
+              const hasPdf = resData.results[id];
+              const tr = results.querySelector(`tr.result-row[data-id="${id}"]`);
+              if (tr) {
+                // Update status pill
+                const pill = tr.querySelector(".col-status .status-pill:last-child");
+                if (pill) {
+                  pill.className = `status-pill ${hasPdf ? "pdf-yes" : "pdf-no"}`;
+                  pill.textContent = hasPdf ? "PDF" : "无PDF";
+                }
+                // Update bulk download check box disabled state
+                const chk = tr.querySelector(".bulk-item-check");
+                if (chk) {
+                  if (hasPdf) {
+                    chk.removeAttribute("disabled");
+                  } else {
+                    chk.setAttribute("disabled", "true");
+                    chk.checked = false;
+                  }
+                }
+              }
+            });
+          }
+        })
+        .catch(err => console.error("Error batch checking PDFs:", err));
+    }
+
     window.AdvancedUI?.onResultsRendered?.(data, currentMode);
   }
 
-  async function loadDefaultResults() {
-    if (currentMode !== "search") return;
+  async function loadDefaultResults(page = 1, isPreload = false) {
+    if (currentMode !== "search" && currentMode !== "tuangbiao") return;
     if ((input?.value || "").trim()) return;
-    if (window.AdvancedUI?.hasActiveFilters?.()) return;
+    if (currentMode === "search" && window.AdvancedUI?.hasActiveFilters?.()) return;
 
-    results.innerHTML =
-      '<div class="loading"><div class="spinner"></div>正在加载…</div>';
+    const cacheKey = getPageCacheKey(currentMode, page, "", "browse=1");
+    if (searchPageCache.has(cacheKey)) {
+      const cachedData = searchPageCache.get(cacheKey);
+      if (!isPreload) {
+        renderItems(cachedData);
+        if (cachedData.page < cachedData.total_pages) {
+          loadDefaultResults(cachedData.page + 1, true);
+        }
+      }
+      return;
+    }
+
+    if (!isPreload) {
+      results.innerHTML =
+        '<div class="loading"><div class="spinner"></div><div class="loading-msg">正在加载…</div></div>';
+    }
+
+    const defaultTimeoutId = !isPreload ? setTimeout(() => {
+      const msgEl = results.querySelector(".loading-msg");
+      if (msgEl) {
+        msgEl.innerHTML = `正在加载…<br><span class="loading-warn-text">⚠️ 响应时间较长，系统繁忙或网络不佳，正在努力为您读取中，请稍候...</span>`;
+      }
+    }, 5000) : null;
 
     const params = new URLSearchParams();
     params.set("browse", "1");
-    params.set("page", "1");
+    params.set("page", String(page || 1));
     params.set("per_page", String(PER_PAGE));
     params.set("enrich", "0");
     params.set("scan_disk", scanDiskEnabled() ? "1" : "0");
+    if (currentMode === "tuangbiao") {
+      params.set("source", "tuangbiao");
+    }
 
     try {
       const res = await fetch(`/api/search?${params.toString()}`);
       const data = await res.json();
       if (!data.ok) {
-        results.innerHTML = "";
+        if (!isPreload) results.innerHTML = "";
         return;
       }
-      renderItems(data);
+      setPageCache(cacheKey, data);
+      if (!isPreload) {
+        renderItems(data);
+        if (data.page < data.total_pages) {
+          loadDefaultResults(data.page + 1, true);
+        }
+      }
     } catch (_) {
-      results.innerHTML = "";
+      if (!isPreload) results.innerHTML = "";
+    } finally {
+      if (defaultTimeoutId) clearTimeout(defaultTimeoutId);
     }
   }
 
@@ -571,33 +802,85 @@
     return (text || "").trim().replace(/\s+/g, " ");
   }
 
-  async function doSearch(page) {
+  function isMeaningless(q) {
+    if (!q) return true;
+    const clean = q.replace(/[\s!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~，。！？；：（）［］｛｝【】《》〈〉“”‘’“”‘’、｀～……—]/g, "");
+    return clean.length === 0;
+  }
+
+  async function doSearch(page, isPreload = false) {
     const q = normalizeQuery(input?.value || "");
     if (input && input.value !== q) input.value = q;
     const advActive = currentMode === "search" && window.AdvancedUI?.hasActiveFilters?.();
+
     if (!q && !advActive) {
-      if (currentMode === "search") {
-        loadDefaultResults();
+      if (!isPreload && (!page || page === 1)) {
+        const hints = {
+          search: "请输入标准编号或名称关键词",
+          tuangbiao: "请输入团标名称或协会名关键词",
+          product: "请输入同类产品名称或关键词",
+        };
+        results.innerHTML = `<div class="empty-state">
+          <div class="empty-icon" aria-hidden="true">✏️</div>
+          <p class="empty-title">请输入关键词</p>
+          <p class="empty-desc">${escapeHtml(hints[currentMode] || "在上方搜索框输入内容后按回车或点击检索")}</p>
+        </div>`;
+        if (btnSearch) btnSearch.disabled = false;
         return;
       }
-      const hints = {
-        tuangbiao: "请输入团标名称或协会名关键词",
-      };
-      results.innerHTML = `<div class="empty-state">
-        <div class="empty-icon" aria-hidden="true">✏️</div>
-        <p class="empty-title">${escapeHtml(hints[currentMode] || "请输入关键词")}</p>
-        <p class="empty-desc">在上方搜索框输入内容后按回车或点击检索</p>
-      </div>`;
+      if (currentMode === "search" || currentMode === "tuangbiao") {
+        loadDefaultResults(page || 1, isPreload);
+        return;
+      }
       return;
     }
-    currentPage = page || 1;
-    if (btnSearch) btnSearch.disabled = true;
-    results.innerHTML =
-      '<div class="loading"><div class="spinner"></div>正在检索…</div>';
+
+    if (isMeaningless(q) && !advActive) {
+      if (!isPreload) {
+        results.innerHTML = `<div class="empty-state">
+          <div class="empty-icon" aria-hidden="true">🔍</div>
+          <p class="empty-title">无意义检索词</p>
+          <p class="empty-desc">请重新输入有效检索词</p>
+        </div>`;
+        if (btnSearch) btnSearch.disabled = false;
+      }
+      return;
+    }
+
+    const extraKey = advActive && window.AdvancedUI?.filterQuery ? window.AdvancedUI.filterQuery() : "";
+    const cacheKey = getPageCacheKey(currentMode, page || 1, q, extraKey);
+
+    if (searchPageCache.has(cacheKey)) {
+      const cachedData = searchPageCache.get(cacheKey);
+      if (!isPreload) {
+        currentPage = page || 1;
+        if ((currentMode === "search" || currentMode === "tuangbiao" || currentMode === "product") && q) saveHistory(q);
+        syncClearBtn();
+        renderItems(cachedData);
+        if (cachedData.page < cachedData.total_pages) {
+          doSearch(cachedData.page + 1, true);
+        }
+      }
+      return;
+    }
+
+    if (!isPreload) {
+      currentPage = page || 1;
+      if (btnSearch) btnSearch.disabled = true;
+      results.innerHTML =
+        '<div class="loading"><div class="spinner"></div><div class="loading-msg">正在检索…</div></div>';
+    }
+
+    const searchTimeoutId = !isPreload ? setTimeout(() => {
+      const msgEl = results.querySelector(".loading-msg");
+      if (msgEl) {
+        msgEl.innerHTML = `正在检索…<br><span class="loading-warn-text">⚠️ 检索用时较长，系统繁忙或网络不佳，正在努力获取结果，请稍候...</span>`;
+      }
+    }, 5000) : null;
 
     const params = new URLSearchParams();
     params.set("q", q);
-    params.set("page", String(currentPage));
+    params.set("page", String(page || 1));
     params.set("per_page", String(PER_PAGE));
     params.set("enrich", "0");
     params.set("scan_disk", scanDiskEnabled() ? "1" : "0");
@@ -607,7 +890,7 @@
       params.set("source", currentMode);
     } else if (advActive && window.AdvancedUI?.filterQuery) {
       if (window.AdvancedUI.validateRankFilter && !window.AdvancedUI.validateRankFilter()) {
-        if (btnSearch) btnSearch.disabled = false;
+        if (!isPreload && btnSearch) btnSearch.disabled = false;
         return;
       }
       const extra = new URLSearchParams(window.AdvancedUI.filterQuery());
@@ -629,16 +912,23 @@
         );
       }
       if (!data.ok) {
-        results.innerHTML = `<div class="alert">${escapeHtml(data.error || "检索失败")}</div>`;
+        if (!isPreload) results.innerHTML = `<div class="alert">${escapeHtml(data.error || "检索失败")}</div>`;
         return;
       }
-      if (currentMode === "search" && q) saveHistory(q);
-      syncClearBtn();
-      renderItems(data);
+      setPageCache(cacheKey, data);
+      if (!isPreload) {
+        if ((currentMode === "search" || currentMode === "tuangbiao" || currentMode === "product") && q) saveHistory(q);
+        syncClearBtn();
+        renderItems(data);
+        if (data.page < data.total_pages) {
+          doSearch(data.page + 1, true);
+        }
+      }
     } catch (e) {
-      results.innerHTML = `<div class="alert">检索失败：${escapeHtml(e.message || "网络错误")}</div>`;
+      if (!isPreload) results.innerHTML = `<div class="alert">检索失败：${escapeHtml(e.message || "网络错误")}</div>`;
     } finally {
-      if (btnSearch) btnSearch.disabled = false;
+      if (searchTimeoutId) clearTimeout(searchTimeoutId);
+      if (!isPreload && btnSearch) btnSearch.disabled = false;
     }
   }
 
@@ -663,7 +953,7 @@
           doSearch(1);
         });
       });
-    } catch (_) {}
+    } catch (_) { }
   }
 
   function isSidebarCollapseAllowed() {
@@ -754,8 +1044,61 @@
     }
   }
 
+  function initPdfPreviewModal() {
+    const modal = document.getElementById("pdfModal");
+    const iframe = document.getElementById("pdfFrame");
+    const titleEl = document.getElementById("pdfModalTitle");
+    const newTabBtn = document.getElementById("pdfModalNewTab");
+    const downloadBtn = document.getElementById("pdfModalDownload");
+    const closeBtn = document.getElementById("pdfModalClose");
+
+    function openPreview(previewUrl, filename, downloadUrl) {
+      if (!modal || !iframe) return;
+      if (titleEl) titleEl.textContent = filename || "PDF 在线预览";
+      if (newTabBtn) newTabBtn.href = previewUrl;
+      if (downloadBtn) downloadBtn.href = downloadUrl || previewUrl.replace(/[?&]preview=1/, "");
+      iframe.src = previewUrl;
+      modal.removeAttribute("hidden");
+      document.body.style.overflow = "hidden";
+    }
+
+    function closePreview() {
+      if (!modal || !iframe) return;
+      modal.setAttribute("hidden", "true");
+      iframe.src = "about:blank";
+      document.body.style.overflow = "";
+    }
+
+    if (closeBtn) closeBtn.addEventListener("click", closePreview);
+    if (modal) {
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) closePreview();
+      });
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && modal && !modal.hasAttribute("hidden")) {
+        closePreview();
+      }
+    });
+
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest(".btn-preview");
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const previewUrl = btn.dataset.previewUrl;
+      const filename = btn.dataset.filename;
+      const downloadUrl = btn.dataset.downloadUrl;
+      if (previewUrl) {
+        openPreview(previewUrl, filename, downloadUrl);
+      }
+    });
+  }
+
   renderHistory();
   initSidebarCollapse();
+  initPdfPreviewModal();
   loadProductClusters();
   loadHealth();
   setMode("search");

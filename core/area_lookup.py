@@ -15,7 +15,21 @@ def _load_area_rows() -> list[dict]:
     if _AREA_CACHE is not None:
         return _AREA_CACHE
     rows: list[dict] = []
-    if UNITS_DB_PATH.is_file():
+    # 1. 尝试从 MySQL 中加载行政区划数据
+    try:
+        from core.db import db
+        if db._mysql_available():
+            with db._mysql() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT area_code, province_name, city_name, county_name, level FROM area_dict"
+                    )
+                    rows = list(cur.fetchall())
+    except Exception:
+        rows = []
+
+    # 2. 尝试从 SQLite (units.db) 中加载
+    if not rows and UNITS_DB_PATH.is_file():
         conn = sqlite3.connect(UNITS_DB_PATH)
         conn.row_factory = sqlite3.Row
         try:
@@ -27,6 +41,8 @@ def _load_area_rows() -> list[dict]:
             rows = []
         finally:
             conn.close()
+
+    # 3. 尝试从 SQL 导出文件中加载
     if not rows:
         sql_path = SQL_DUMP_DIR / "mydate_area_dict.sql"
         if sql_path.is_file():
@@ -98,7 +114,47 @@ def list_counties(province: str, city: str) -> list[str]:
 
 def suggest_companies(query: str, limit: int = 40) -> list[str]:
     q = (query or "").strip()
-    if len(q) < 2 or not UNITS_DB_PATH.is_file():
+    if len(q) < 2:
+        return []
+
+    # 1. 尝试从 MySQL 数据库查询
+    try:
+        from core.db import db
+        if db._mysql_available():
+            with db._mysql() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT DISTINCT unit_name FROM unit_dict
+                        WHERE unit_name LIKE %s
+                        ORDER BY
+                          CASE WHEN unit_name LIKE %s THEN 0 ELSE 1 END,
+                          length(unit_name),
+                          unit_name
+                        LIMIT %s
+                        """,
+                        (f"%{q}%", f"{q}%", max(limit * 2, limit)),
+                    )
+                    rows = cur.fetchall()
+                    seen: set[str] = set()
+                    out: list[str] = []
+                    for row in rows:
+                        name = str(row.get("unit_name", "")).strip()
+                        if not name:
+                            continue
+                        key = name.rstrip("。，,;；.·")
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        out.append(name)
+                        if len(out) >= limit:
+                            break
+                    return out
+    except Exception:
+        pass
+
+    # 2. 尝试从 SQLite units.db 查询
+    if not UNITS_DB_PATH.is_file():
         return []
     conn = sqlite3.connect(UNITS_DB_PATH)
     try:
@@ -132,3 +188,4 @@ def suggest_companies(query: str, limit: int = 40) -> list[str]:
         return []
     finally:
         conn.close()
+

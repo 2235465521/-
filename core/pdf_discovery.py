@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import re
 import threading
 import time
 from pathlib import Path
@@ -63,21 +64,17 @@ def _bg_scan() -> None:
 
 
 def check_file_exists_in_cache(path: Path) -> bool:
-    """Check if a file exists using the in-memory cache if populated; otherwise fallback to is_file()"""
-    global _DISK_PDF_CACHE, _DISK_PDF_PATHS_SET
-    key = str(path).lower()
-    
-    # Check if the cache is populated
-    with _DISK_PDF_CACHE_LOCK:
-        has_cache = bool(_DISK_PDF_CACHE)
-        if has_cache:
-            return key in _DISK_PDF_PATHS_SET
-            
-    # Fallback to direct disk check
+    """检查文件是否存在（优先检查直接路径，找不到再比对缓存路径集合）。"""
     try:
-        return path.is_file()
+        if path.is_file():
+            return True
     except Exception:
-        return False
+        pass
+    key = str(path).lower()
+    with _DISK_PDF_CACHE_LOCK:
+        if key in _DISK_PDF_PATHS_SET:
+            return True
+    return False
 
 
 def start_background_scan() -> None:
@@ -112,14 +109,43 @@ def _get_disk_pdf_list() -> list[Path]:
         return _DISK_PDF_CACHE
 
 
+def extract_std_number_digits(std_id: str) -> str | None:
+    if not std_id:
+        return None
+    # If there is a slash (e.g. /T, /Z, /X), standard number is AFTER the slash
+    slash_pos = std_id.find("/")
+    if slash_pos != -1:
+        after_slash = std_id[slash_pos:]
+        m = re.search(r'\d+', after_slash)
+        if m:
+            return m.group(0)
+    # Otherwise, find standard number digits (prefer length >= 3)
+    matches = re.findall(r'\d+', std_id)
+    if not matches:
+        return None
+    for m in matches:
+        if len(m) >= 3:
+            return m
+    return matches[0]
+
+
 def discover_pdfs_on_disk(std_id: str, limit: int = 20) -> list[Path]:
     found: list[Path] = []
     seen: set[str] = set()
     all_pdfs = _get_disk_pdf_list()
 
+    # Find the main standard number part of the std_id to pre-filter (extremely fast)
+    num_part = extract_std_number_digits(std_id)
+
+    # If we have a number part, we only scan files containing it
+    if num_part:
+        candidates = [hit for hit in all_pdfs if num_part in hit.name]
+    else:
+        candidates = all_pdfs
+
     for pattern in std_id_glob_patterns(std_id):
         pattern_lower = pattern.lower()
-        for hit in all_pdfs:
+        for hit in candidates:
             if fnmatch.fnmatch(hit.name.lower(), pattern_lower):
                 if filename_contains_std_id(hit.name, std_id):
                     key = str(hit).lower()

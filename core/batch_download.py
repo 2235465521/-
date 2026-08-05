@@ -1,6 +1,7 @@
 """Excel/CSV 批量解析、标准匹配与 ZIP 打包下载。"""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import csv
 import io
 import json
@@ -288,6 +289,24 @@ def resolve_item(query: str, *, scan_disk: bool = True) -> dict[str, Any]:
     }
 
 
+def resolve_item_cached(item: dict | str, *, scan_disk: bool = True) -> dict[str, Any]:
+    if isinstance(item, str):
+        return resolve_item(item, scan_disk=scan_disk)
+    
+    pdf_path_str = item.get("pdf_path")
+    if pdf_path_str and item.get("status") == "ok":
+        pdf_path = Path(pdf_path_str)
+        if check_file_exists_in_cache(pdf_path):
+            res = dict(item)
+            return res
+
+    query = (item.get("query") or "").strip()
+    res = resolve_item(query, scan_disk=scan_disk)
+    if item.get("row") is not None:
+        res["row"] = item.get("row")
+    return res
+
+
 def _safe_zip_name(std_id: str, original: str) -> str:
     base = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", std_id or "unknown")
     base = base.replace(" ", "")[:80] or "unknown"
@@ -450,6 +469,7 @@ def build_zip_archive(
     items: list[dict],
     *,
     scan_disk: bool = True,
+    only_pdf: bool = False,
     progress: Callable[[int, int], None] | None = None,
     original_data: bytes | None = None,
     original_filename: str | None = None,
@@ -460,23 +480,39 @@ def build_zip_archive(
     results: list[dict] = []
     ok_count = 0
 
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        total = len(items)
-        for idx, item in enumerate(items, start=1):
+    # 1. 使用多线程 ThreadPoolExecutor 并发解析与匹配条目 (如果前端已预览过直接缓存命中)
+    def _proc(arg):
+        idx, item = arg
+        res = resolve_item_cached(item, scan_disk=scan_disk)
+        if not res.get("row"):
+            res["row"] = item.get("row") or idx
+        return idx, res
+
+    max_workers = min(16, max(1, len(items)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        resolved_items = list(executor.map(_proc, enumerate(items, start=1)))
+
+    resolved_items.sort(key=lambda x: x[0])
+
+    # 2. 将匹配成功的 PDF 文件高效写入 ZIP 包 (优化 compresslevel=1 以提高文件生成速率)
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+        total = len(resolved_items)
+        for idx, resolved in resolved_items:
             if progress:
                 progress(idx, total)
-            query = (item.get("query") or "").strip()
-            row_no = item.get("row") or idx
-            resolved = resolve_item(query, scan_disk=scan_disk)
-            resolved["row"] = row_no
-            results.append(resolved)
+            row_no = resolved.get("row") or idx
             if resolved.get("status") != "ok":
+                if not only_pdf:
+                    results.append(resolved)
                 continue
             pdf_path = Path(resolved["pdf_path"])
             if not check_file_exists_in_cache(pdf_path):
                 resolved["status"] = "no_pdf"
                 resolved["message"] = "PDF 文件不存在"
+                if not only_pdf:
+                    results.append(resolved)
                 continue
+            results.append(resolved)
             prefix = f"{row_no:03d}_"
             entry_name = _unique_name(used_names, prefix + resolved["zip_name"])
             zf.write(pdf_path, arcname=f"PDF/{entry_name}")
@@ -599,14 +635,14 @@ def build_zip_from_base_ids(
 
 
 def preview_items(items: list[dict], *, scan_disk: bool = False) -> dict[str, Any]:
-    rows: list[dict] = []
-    for item in items[:MAX_ROWS]:
-        q = (item.get("query") or "").strip()
-        if not q:
-            continue
-        resolved = resolve_item(q, scan_disk=scan_disk)
-        resolved["row"] = item.get("row")
-        rows.append(resolved)
+    target_items = [it for it in items[:MAX_ROWS] if (it.get("query") or "").strip()]
+    if not target_items:
+        return {"ok": True, "items": [], "summary": {"total": 0, "success": 0, "failed": 0}}
+
+    max_workers = min(16, max(1, len(target_items)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        rows = list(executor.map(lambda item: resolve_item_cached(item, scan_disk=scan_disk), target_items))
+
     ok = sum(1 for r in rows if r.get("status") == "ok")
     return {
         "ok": True,

@@ -1,56 +1,55 @@
 @echo off
 setlocal EnableExtensions
-chcp 65001 >nul
 cd /d "%~dp0"
-title æ ‡å‡†PDFä¸‹è½½
+title ±ê×¼PDFÏÂÔØ
 
 set "PY="
-where py >nul 2>&1 && set "PY=py -3"
-if not defined PY where python >nul 2>&1 && set "PY=python"
+where python >nul 2>&1 && set "PY=python"
+if not defined PY where py >nul 2>&1 && set "PY=py -3"
 
 if not defined PY (
     echo.
-    echo  [é”™è¯¯] æœªæ‰¾åˆ° Python 3
-    echo  è¯·å®‰è£… Python å¹¶å‹¾é€‰ "Add to PATH"
+    echo  [´íÎó] Î´ÕÒµ½ Python »·¾³£¡
+    echo  Çë°²×° Python ²¢¹´Ñ¡ "Add to PATH" Ñ¡Ïî¡£
     echo.
     pause
     exit /b 1
 )
 
 echo.
-echo  æ­£åœ¨é‡Šæ”¾ 5000 ç«¯å£ï¼Œå¦‚æœ‰æ—§è¿›ç¨‹ä¼šå…ˆç»“æŸâ€¦
+echo  ÕıÔÚÊÍ·Å 5000 ¶Ë¿Ú£¬ÈçÓĞ¾É½ø³Ì»áÏÈ½áÊø¡­
 for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":5000" ^| findstr "LISTENING"') do (
     taskkill /F /PID %%a >nul 2>&1
 )
 
-echo  æ£€æŸ¥è¿è¡Œä¾èµ–â€¦
+echo  ¼ì²éÔËĞĞÒÀÀµ¡­
 %PY% -c "import flask, pymysql" >nul 2>&1
 if errorlevel 1 (
-    echo  é¦–æ¬¡æˆ–ç¼ºåŒ…ï¼Œæ­£åœ¨å®‰è£… requirements.txt â€¦
+    echo  Ê×´Î»òÈ±°ü£¬ÕıÔÚ°²×° requirements.txt ¡­
     %PY% -m pip install -r requirements.txt
     if errorlevel 1 (
         echo.
-        echo  [é”™è¯¯] ä¾èµ–å®‰è£…å¤±è´¥ï¼Œè¯·æ£€æŸ¥ç½‘ç»œæˆ– Python ç¯å¢ƒ
+        echo  [´íÎó] ÒÀÀµ°²×°Ê§°Ü£¬Çë¼ì²éÍøÂç»ò Python »·¾³
         pause
         exit /b 1
     )
 )
 
 if not exist "data\standards.db" (
-    echo  [æç¤º] æœªæ‰¾åˆ° data\standards.dbï¼Œæ ‡å‡†æ£€ç´¢å¯èƒ½ä¸å¯ç”¨
-    echo         éœ€è¦æ—¶å¯è¿è¡Œ: python scripts\build_index.py
+    echo  [ÌáÊ¾] Î´ÕÒµ½ data\standards.db£¬±ê×¼¼ìË÷¿ÉÄÜ²»¿ÉÓÃ
+    echo         ĞèÒªÊ±¿ÉÔËĞĞ: python scripts\build_index.py
 )
 if not exist "data\units.db" (
-    echo  [æç¤º] æœªæ‰¾åˆ° data\units.dbï¼Œçœ/å¸‚/èµ·è‰å•ä½ç­›é€‰å¯èƒ½ä¸å¯ç”¨
-    echo         éœ€è¦æ—¶å¯è¿è¡Œ: python scripts\build_unit_index.py
+    echo  [ÌáÊ¾] Î´ÕÒµ½ data\units.db£¬Ê¡/ÊĞ/Æğ²İµ¥Î»É¸Ñ¡¿ÉÄÜ²»¿ÉÓÃ
+    echo         ĞèÒªÊ±¿ÉÔËĞĞ: python scripts\build_unit_index.py
 )
 
 echo.
 echo  ========================================
-echo    æ ‡å‡†PDFä¸‹è½½
-echo    åœ°å€: http://127.0.0.1:5000/
-echo    å¯åŠ¨åä¼šè‡ªåŠ¨æ‰“å¼€æµè§ˆå™¨
-echo    è¯·å‹¿å…³é—­æœ¬çª—å£ - å…³é—­å³åœæ­¢æœåŠ¡
+echo    ±ê×¼PDFÏÂÔØ
+echo    µØÖ·: http://127.0.0.1:5000/
+echo    Æô¶¯ºó»á×Ô¶¯´ò¿ªä¯ÀÀÆ÷
+echo    ÇëÎğ¹Ø±Õ±¾´°¿Ú - ¹Ø±Õ¼´Í£Ö¹·şÎñ
 echo  ========================================
 echo.
 
@@ -59,8 +58,8 @@ set "EC=%ERRORLEVEL%"
 
 if not "%EC%"=="0" (
     echo.
-    echo  [å¯åŠ¨å¤±è´¥] é”™è¯¯ä»£ç  %EC%
-    echo  è¯·æŠŠä¸Šé¢æŠ¥é”™ä¿¡æ¯æˆªå›¾å‘ç»´æŠ¤äººå‘˜
+    echo  [Æô¶¯Ê§°Ü] ´íÎó´úÂë %EC%
+    echo  Çë°ÑÉÏÃæ±¨´íĞÅÏ¢½ØÍ¼·¢Î¬»¤ÈËÔ±
     echo.
     pause
     exit /b %EC%

@@ -127,8 +127,19 @@
         </div>
 
         <div class="history-wrap empty" id="historyWrap">
-          <div class="history-label">最近检索</div>
-          <div class="chips" id="historyChips"></div>
+          <div class="history-bar">
+            <div class="chips" id="historyChips"></div>
+            <button type="button" class="history-more-btn" id="historyMoreBtn" hidden title="显示更早历史记录" aria-expanded="false">
+              <span>更多</span>
+              <svg class="more-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </div>
+          <div class="history-dropdown-panel" id="historyDropdownPanel" hidden>
+            <div class="history-dropdown-header">
+              <span class="history-dropdown-title">更早的历史检索记录</span>
+            </div>
+            <div class="chips history-more-chips" id="historyMoreChips"></div>
+          </div>
         </div>
 
         <div class="search-tools" id="searchTools">
@@ -139,6 +150,7 @@
           </button>
           <div class="bulk-bar">
             <label class="bulk-select-all"><input type="checkbox" id="chkSelectPage" /> 本页全选</label>
+            <button type="button" class="btn-clear-selection" id="btnClearSelection" hidden>清空已选</button>
             <label class="bulk-scan"><input type="checkbox" id="advScanDisk" checked /> 扫描磁盘</label>
             <button type="button" class="btn-bulk-download" id="btnBulkDownload" disabled>
               打包下载 (<span id="bulkCount">0</span>)
@@ -151,41 +163,41 @@
             <h3>高级筛选</h3>
           </div>
           <div class="advanced-grid">
-            <label class="adv-field">
+            <label class="adv-field col-span-3">
               <span>状态</span>
               <select id="advExState"></select>
             </label>
-            <label class="adv-field">
+            <label class="adv-field col-span-3">
               <span>标准类型</span>
               <select id="advStdType"></select>
             </label>
-            <label class="adv-field">
+            <label class="adv-field col-span-2">
               <span>省</span>
               <select id="advProvince"></select>
             </label>
-            <label class="adv-field">
+            <label class="adv-field col-span-2">
               <span>市</span>
               <select id="advCity"></select>
             </label>
-            <label class="adv-field">
+            <label class="adv-field col-span-2">
               <span>县/区</span>
               <select id="advCounty"></select>
             </label>
-            <label class="adv-field adv-field-wide">
+            <label class="adv-field adv-field-wide col-span-6">
               <span>产品/品种</span>
               <div class="adv-combo">
                 <input type="text" id="advProduct" placeholder="输入或选择，如：牙膏、铅笔、煤矿" autocomplete="off" spellcheck="false" />
                 <div class="adv-combo-panel" id="advProductPanel" hidden role="listbox"></div>
               </div>
             </label>
-            <label class="adv-field adv-field-wide">
+            <label class="adv-field adv-field-wide col-span-6">
               <span>公司/起草单位</span>
               <div class="adv-combo">
                 <input type="text" id="advCompany" placeholder="输入单位名称关键词" autocomplete="off" spellcheck="false" />
                 <div class="adv-combo-panel" id="advCompanyPanel" hidden role="listbox"></div>
               </div>
             </label>
-            <label class="adv-field">
+            <label class="adv-field col-span-4">
               <span>起草顺位</span>
               <select id="advUnitRank">
                 <option value="">不限（任一顺位）</option>
@@ -195,15 +207,15 @@
                 <option value="gt3">大于三（第 4 位及以后）</option>
               </select>
             </label>
-            <label class="adv-field">
+            <label class="adv-field col-span-2">
               <span>年份起</span>
               <select id="advYearFrom"></select>
             </label>
-            <label class="adv-field">
+            <label class="adv-field col-span-2">
               <span>年份止</span>
               <select id="advYearTo"></select>
             </label>
-            <div class="adv-field adv-year-presets">
+            <div class="adv-field adv-year-presets col-span-4">
               <span>年份快捷</span>
               <div class="year-preset-btns">
                 <button type="button" class="year-preset" data-years="3">近3年</button>
@@ -298,6 +310,7 @@
                 <div class="batch-actions">
                   <button type="button" class="btn-batch btn-batch-primary" id="btnBatchParse">解析文件</button>
                   <button type="button" class="btn-batch btn-batch-secondary" id="btnBatchPreview" disabled>预览匹配</button>
+                  <button type="button" class="btn-batch btn-batch-danger" id="btnBatchCancelPreview" style="display: none;">取消预览</button>
                   <button type="button" class="btn-batch btn-batch-accent" id="btnBatchDownload" disabled>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0l4-4m-4 4l-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
                     下载 ZIP
@@ -312,6 +325,28 @@
                 <h3 class="batch-table-heading">匹配预览</h3>
                 <button type="button" class="btn-batch btn-batch-ghost" id="btnBatchBack">← 返回上传</button>
               </div>
+              <div class="batch-options-bar" id="batchOptionsBar">
+                <div class="batch-scope-selector">
+                  <span class="opts-label">下载范围：</span>
+                  <label class="batch-radio-opt">
+                    <input type="radio" name="batchDlScope" value="all" checked />
+                    全部项 (<span id="cntDlAll">0</span>)
+                  </label>
+                  <label class="batch-radio-opt">
+                    <input type="radio" name="batchDlScope" value="only_pdf" />
+                    仅有 PDF 的项 (<span id="cntDlPdf">0</span>)
+                  </label>
+                  <label class="batch-radio-opt">
+                    <input type="radio" name="batchDlScope" value="selected" />
+                    已勾选项 (<span id="cntDlSelected">0</span>)
+                  </label>
+                </div>
+                <div class="batch-select-btns">
+                  <button type="button" class="btn-tb-opt" id="btnSelectAllRows">全选</button>
+                  <button type="button" class="btn-tb-opt" id="btnSelectNoneRows">全不选</button>
+                  <button type="button" class="btn-tb-opt btn-tb-accent" id="btnSelectPdfOnlyRows">仅选有 PDF</button>
+                </div>
+              </div>
               <div class="batch-table-wrap" id="batchTableWrap"></div>
             </div>
             <div class="batch-feedback" id="batchFeedback" hidden></div>
@@ -321,7 +356,44 @@
     </div>
   </div>
 
-  <script src="js/app.js?v=5.1.4"></script>
+  <!-- PDF 预览弹窗 Modal -->
+  <div class="pdf-modal-backdrop" id="pdfModal" hidden>
+    <div class="pdf-modal-container">
+      <div class="pdf-modal-header">
+        <div class="pdf-modal-title">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+          <span id="pdfModalTitle">PDF 在线预览</span>
+        </div>
+        <div class="pdf-modal-actions">
+          <a id="pdfModalNewTab" href="#" target="_blank" class="btn-modal-action" title="在新标签页打开预览">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+              <polyline points="15 3 21 3 21 9"/>
+              <line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+            新标签页
+          </a>
+          <a id="pdfModalDownload" href="#" download class="btn-modal-action btn-modal-dl" title="下载文件">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            下载文件
+          </a>
+          <button type="button" class="pdf-modal-close" id="pdfModalClose" title="关闭预览 (Esc)">✕</button>
+        </div>
+      </div>
+      <div class="pdf-modal-body">
+        <iframe id="pdfFrame" src="about:blank" frameborder="0"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js?v=5.2.0"></script>
   <script src="js/advanced.js?v=5.0.0"></script>
   <script src="js/batch.js?v=4.0.0"></script>
 </body>
