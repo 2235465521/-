@@ -62,11 +62,9 @@ def sanitize_std_id_input(q: str) -> str:
 
 
 def chinese_core_text(q: str) -> str:
-    """食/品、第3部分 -> 食品、第3部分（保留汉字与数字英文字母，去除标点和空格）。"""
-    s = re.sub(r"[^\w\u4e00-\u9fff]", "", q or "")
-    if len(s) >= 2:
-        return s
-    return ""
+    """食/品、第3部分 -> 食品 第3部分（保留汉字与数字英文字母，标点替换为空格）。"""
+    s = re.sub(r"[^\w\u4e00-\u9fff]+", " ", q or "")
+    return collapse_whitespace(s)
 
 
 def _compact_text_sql_expr(column: str) -> str:

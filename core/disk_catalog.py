@@ -22,22 +22,38 @@ def extract_core_keywords(q: str) -> list[str]:
     cleaned = clean_query_text(q)
     if not cleaned:
         return []
-    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9]{2,}", cleaned)
-    if not tokens:
+
+    ignored = {
+        "附件", "附件1", "附件2", "附件3", "附件4", "附件5",
+        "关于", "通知", "文件", "说明", "草案", "拟定", "意见",
+        "标准", "团体标准", "征求意见稿", "编制说明"
+    }
+
+    raw_tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9]{2,}", cleaned)
+    if not raw_tokens:
         return [cleaned] if cleaned else []
+
+    all_chunks = []
+    for tok in raw_tokens:
+        if tok in ignored:
+            continue
+        all_chunks.append(tok)
+        if re.fullmatch(r"[\u4e00-\u9fff]{6,}", tok):
+            all_chunks.append(tok[:5])
+            all_chunks.append(tok[:4])
 
     seen = set()
     result = []
-    ignored = {"附件", "关于", "通知", "文件", "说明", "草案", "拟定", "意见", "标准"}
-    for t in sorted(tokens, key=len, reverse=True):
+    for t in sorted(all_chunks, key=len, reverse=True):
         t_lower = t.lower()
         if t_lower not in seen and t not in ignored:
             seen.add(t_lower)
             result.append(t)
-            if len(result) >= 4:
+            if len(result) >= 3:
                 break
+
     if not result:
-        return tokens[:4]
+        return [t for t in raw_tokens if t not in ignored][:3] or raw_tokens[:3]
     return result
 
 
