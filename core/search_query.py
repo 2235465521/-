@@ -73,7 +73,8 @@ def _compact_text_sql_expr(column: str) -> str:
         " ", "　", "：", ":", "—", "－", "-", "（", "）", "(", ")", "·", ".", "，", ",", "／", "/",
         "《", "》", "“", "”", '"', "'", "‘", "’", "【", "】", "[", "]", "!", "！", "?", "？", "_", "~"
     ):
-        expr = f"REPLACE({expr}, '{ch}', '')"
+        ch_escaped = ch.replace("'", "''").replace("\\", "\\\\")
+        expr = f"REPLACE({expr}, '{ch_escaped}', '')"
     return expr
 
 
@@ -203,7 +204,8 @@ def like_pattern(q: str) -> str:
 def _compact_sql_expr(column: str) -> str:
     expr = f"UPPER({column})"
     for ch in (" ", "/", "-", "—", "－", "／"):
-        expr = f"REPLACE({expr}, '{ch}', '')"
+        ch_escaped = ch.replace("'", "''").replace("\\", "\\\\")
+        expr = f"REPLACE({expr}, '{ch_escaped}', '')"
     return expr
 
 
