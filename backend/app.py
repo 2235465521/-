@@ -406,17 +406,23 @@ def api_std_detail(base_id: int):
 
 @app.route("/api/download/<int:file_id>")
 def api_download_file(file_id: int):
+    from core.std_normalize import filename_contains_std_id
+
     rec = db.get_filepath_record(file_id)
     if not rec:
         return jsonify({"ok": False, "error": "文件记录不存在"}), 404
     std = db.get_by_id(rec["base_id"])
+    std_id = std.std_id if std else None
     found = find_pdf_on_disk(
         rec.get("file_path") or "",
         rec.get("file_name") or "",
-        std_id=std.std_id if std else None,
+        std_id=std_id,
     )
+    # 拒绝「库内题目/文件名」与实际磁盘文件标准号不一致的错配
+    if found and std_id and not filename_contains_std_id(found.name, std_id):
+        found = None
     if not found or not found.is_file():
-        return jsonify({"ok": False, "error": "磁盘上未找到 PDF 文件"}), 404
+        return jsonify({"ok": False, "error": "磁盘上未找到与该标准号匹配的 PDF 文件"}), 404
     preview = request.args.get("preview", "0") == "1"
     if preview:
         mime = mimetypes.guess_type(found.name)[0] or "application/pdf"

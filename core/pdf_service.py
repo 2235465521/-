@@ -1,6 +1,5 @@
 """PDF 路径解析与标准文件收集。"""
 from __future__ import annotations
-import re
 
 from pathlib import Path
 
@@ -12,6 +11,26 @@ from core.pdf_discovery import (
     find_pdf_by_filename_on_disk,
     check_file_exists_in_cache,
 )
+from core.std_normalize import filename_contains_std_id
+
+
+def _basename_equals(a: str, b: str) -> bool:
+    return Path(a or "").name.lower() == Path(b or "").name.lower()
+
+
+def _path_matches_expected(
+    path: Path,
+    *,
+    file_name: str | None = None,
+    std_id: str | None = None,
+) -> bool:
+    """解析到的磁盘文件必须与期望文件名 / 标准号一致，避免 file_path 错指。"""
+    name = (file_name or "").strip()
+    if name and not _basename_equals(path.name, name):
+        return False
+    if std_id and not filename_contains_std_id(path.name, std_id):
+        return False
+    return True
 
 
 def find_pdf_on_disk(
@@ -21,37 +40,46 @@ def find_pdf_on_disk(
     std_id: str | None = None,
     scan_disk: bool = True,
 ) -> Path | None:
+    """按 file_path → file_name → 标准号扫盘 依次查找，并校验文件名与标准号一致。"""
+    name = (file_name or "").strip()
     rel = (rel_path or "").replace("\\", "/").lstrip("/")
+
+    # 1. 数据库相对路径：仅当实际 basename 与 file_name / std_id 一致时才采用
     if rel:
         candidate = PDF_ROOT / rel
         try:
-            if check_file_exists_in_cache(candidate):
+            if check_file_exists_in_cache(candidate) and _path_matches_expected(
+                candidate, file_name=name or None, std_id=std_id
+            ):
                 return candidate
         except Exception:
             pass
-    name = (file_name or "").strip()
+
+    # 2. 按 file_name 精确查找（路径错指时的正确回退）
     if name:
-        # 1. 尝试直接路径匹配（直接寻找，不遍历，最快）
         for root in (PDF_ROOT, PDF_SEARCH_ROOT):
             if not root.is_dir():
                 continue
             direct = root / name
             try:
-                if check_file_exists_in_cache(direct):
+                if check_file_exists_in_cache(direct) and _path_matches_expected(
+                    direct, file_name=name, std_id=std_id
+                ):
                     return direct
             except Exception:
                 pass
-        
-        # 2. 如果直接路径找不到，且允许扫盘，在缓存的磁盘 PDF 列表中快速查找
+
         if scan_disk:
             found = find_pdf_by_filename_on_disk(name)
-            if found:
+            if found and _path_matches_expected(found, file_name=name, std_id=std_id):
                 return found
 
+    # 3. 按标准号在磁盘缓存中兜底
     if std_id and scan_disk:
         hits = discover_pdfs_on_disk(std_id, limit=5)
-        if hits:
-            return hits[0]
+        for hit in hits:
+            if filename_contains_std_id(hit.name, std_id):
+                return hit
     return None
 
 
@@ -77,71 +105,65 @@ def _append_unique_file(files: list[dict], seen: set[str], entry: dict) -> None:
     files.append(entry)
 
 
-def collect_files_for_standard(std: StandardInfo, *, scan_disk: bool = True) -> list[dict]:
-    # Helper to verify that a PDF filename matches the standard ID
-    def _std_id_matches_filename(std_id: str, filename: str) -> bool:
-        """Return True if normalized std_id appears in normalized filename.
-        Normalization removes non‑alphanumeric characters and lower‑cases both strings.
-        """
-        std_norm = re.sub(r"[^0-9a-zA-Z]", "", std_id).lower()
-        file_norm = re.sub(r"[^0-9a-zA-Z]", "", filename).lower()
-        if std_norm in file_norm:
-            return True
-        # Relaxed matching (strip optional T/Z/X from prefix like DB12T -> DB12, GBT -> GB)
-        std_relaxed = re.sub(r"^([a-z]{2,5}\d{0,2})[tzx]", r"\1", std_norm)
-        file_relaxed = re.sub(r"^([a-z]{2,5}\d{0,2})[tzx]", r"\1", file_norm)
-        if std_relaxed in file_relaxed:
-            return True
-        return False
-    files: list[dict] = []
-    # Helper to pick the optimal PDF among duplicates
-    def _select_best_file(candidates: list[dict]) -> list[dict]:
-        """Return a list containing the best PDF file.
-        Preference order:
-          1. Source 'db' with exists=True
-          2. Source 'disk' with exists=True
-          3. Any file with exists=True
-        If none exist, return empty list.
-        """
-        best = None
-        for f in candidates:
-            if not f.get("exists"):
-                continue
-            src = f.get("source")
-            if src == "db":
-                return [f]
-            if best is None and src == "disk":
-                best = f
-        if best:
-            return [best]
-        # fallback: first existing file
-        for f in candidates:
-            if f.get("exists"):
-                return [f]
-        return []
+def _select_best_file(candidates: list[dict]) -> list[dict]:
+    """Return a list containing the best PDF file.
+    Preference order:
+      1. Source 'db' with exists=True
+      2. Source 'disk' with exists=True
+      3. Any file with exists=True
+    If none exist, return empty list.
+    """
+    best = None
+    for f in candidates:
+        if not f.get("exists"):
+            continue
+        src = f.get("source")
+        if src == "db":
+            return [f]
+        if best is None and src == "disk":
+            best = f
+    if best:
+        return [best]
+    for f in candidates:
+        if f.get("exists"):
+            return [f]
+    return []
 
+
+def collect_files_for_standard(std: StandardInfo, *, scan_disk: bool = True) -> list[dict]:
+    files: list[dict] = []
     seen: set[str] = set()
     for f in std.files or []:
         rel = f.get("file_path") or ""
-        name = f.get("file_name") or ""
-        # 1. 预先校验：若数据库文件记录的名称与当前标准号年份不匹配，则直接忽略此记录（年份不一样的不要展示）
-        if not _std_id_matches_filename(std.std_id, name):
+        db_name = (f.get("file_name") or "").strip()
+        # file_name 仅在含本标准号时参与精确匹配；否则忽略，避免错名把解析带偏
+        name = (
+            db_name
+            if db_name and filename_contains_std_id(db_name, std.std_id)
+            else ""
+        )
+        # 解析时强制校验 std_id：拒绝 file_path 指向其它标准 PDF 的错配
+        found = find_pdf_on_disk(rel, name, std_id=std.std_id, scan_disk=False)
+        if not found and scan_disk:
+            found = find_pdf_on_disk(rel, name, std_id=std.std_id, scan_disk=True)
+        if not found:
             continue
-        # 2. 传入 std_id=None，避免在循环体内重复执行昂贵的多模板扫盘
-        found = find_pdf_on_disk(rel, name, std_id=None, scan_disk=scan_disk)
-        if found:
-            entry = {
-                **f,
-                "exists": True,
-                "source": "db",
-                "resolved_path": str(found),
-            }
-            _append_unique_file(files, seen, entry)
-    # 3. 只有当数据库匹配记录为空或均失效时，才执行兜底磁盘扫盘
+        if not filename_contains_std_id(found.name, std.std_id):
+            continue
+        entry = {
+            **f,
+            # 展示名与真实文件一致，避免题目显示 A、内容却是 B
+            "file_name": found.name,
+            "exists": True,
+            "source": "db",
+            "resolved_path": str(found),
+        }
+        _append_unique_file(files, seen, entry)
+
+    # 4. 仅当库记录均未命中时，才按标准号扫盘兜底
     if scan_disk and not any(x.get("exists") for x in files):
         for i, pdf in enumerate(discover_pdfs_on_disk(std.std_id, limit=10)):
-            # Ensure the discovered PDF filename matches the standard ID
-            if not _std_id_matches_filename(std.std_id, pdf.name):
+            if not filename_contains_std_id(pdf.name, std.std_id):
                 continue
             try:
                 rel = pdf_display_path(pdf)
@@ -168,14 +190,18 @@ def pick_pdf_path(std: StandardInfo, files: list[dict], *, scan_disk: bool = Tru
         if not f.get("exists"):
             continue
         resolved = f.get("resolved_path")
-        if resolved and check_file_exists_in_cache(Path(resolved)):
-            return Path(resolved)
+        if resolved:
+            path = Path(resolved)
+            if check_file_exists_in_cache(path) and filename_contains_std_id(
+                path.name, std.std_id
+            ):
+                return path
         found = find_pdf_on_disk(
             f.get("file_path") or "",
             f.get("file_name") or "",
             std_id=std.std_id,
             scan_disk=scan_disk,
         )
-        if found:
+        if found and filename_contains_std_id(found.name, std.std_id):
             return found
     return None
