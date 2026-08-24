@@ -1,0 +1,20 @@
+[Unit]
+Description=食品安全监督抽查数据统计
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zkbz01
+WorkingDirectory=/home/zkbz01/itcast_files/chouchafenxi/backend
+Environment=DATA_ROOT=/mnt/std_bk/全国各省市食品安全监督抽查
+Environment=APP_HOST=0.0.0.0
+Environment=APP_PORT=8080
+Environment=PRODUCTION=1
+Environment=SERVE_STATIC=1
+ExecStart=/home/zkbz01/anaconda3/envs/chouchafenxi/bin/python app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

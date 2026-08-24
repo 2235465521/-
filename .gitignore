@@ -1,0 +1,42 @@
+# 数据缓存与临时产物
+data_cache.json
+data_cache_meta.json
+data_cache_qualified.jsonl
+data_cache_unqualified.jsonl
+backend/data_cache.json
+backend/data/analytics_disk_cache/
+backend/data/region_disk_cache/
+backend/data/mysql_stats_cache.json
+debug_*.json
+
+# Python 虚拟环境与编译缓存
+__pycache__/
+*.pyc
+.venv/
+.venv*/
+.venv-linux/
+backend/__pycache__/
+backend/*/__pycache__/
+backend/*/*/__pycache__/
+
+# 前端依赖与产物
+frontend/node_modules/
+frontend/dist/
+
+# 运行输出与日志
+backend/output/
+logs/
+*.log
+
+# 环境变量与配置（含敏感账号/内部IP）
+deploy.env
+deploy-staging.env
+.env
+.env.*
+backend/.env.mysql
+
+# IDE 与编辑器配置
+.cursor/
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="4" y1="2" x2="28" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0070EB"/>
+      <stop offset="1" stop-color="#0058BC"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="16" y1="6" x2="16" y2="26" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.98"/>
+      <stop offset="1" stop-color="#E0F2FE" stop-opacity="0.92"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#bg)"/>
+  <path
+    d="M16 5.2 9.2 8.4v4.8c0 4.1 2.7 7.9 6.8 8.7 4.1-.8 6.8-4.6 6.8-8.7V8.4L16 5.2Z"
+    fill="url(#shield)"
+    stroke="#FFFFFF"
+    stroke-width="0.8"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M12.2 15.2 14.6 17.6 19.8 12.4"
+    stroke="#059669"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <rect x="11.5" y="20.2" width="2.2" height="4.2" rx="0.6" fill="#0058BC" fill-opacity="0.85"/>
+  <rect x="14.9" y="18.4" width="2.2" height="6" rx="0.6" fill="#0058BC"/>
+  <rect x="18.3" y="19.6" width="2.2" height="4.8" rx="0.6" fill="#0070EB"/>
+</svg>
