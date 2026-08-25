@@ -24,6 +24,7 @@ from core.search_query import (
 )
 from core.std_normalize import normalize_std_id, std_id_compact_key, std_id_norm_key
 from core.cache_manager import CacheManager
+from core.pdf_availability import batch_has_pdf_map, pdf_only_exists_sql
 
 EX_STATE_LABEL = {0: "废止", 1: "现行", 2: "即将实施"}
 
@@ -386,17 +387,68 @@ class Database:
                     return _row_to_standard(d, files)
         return None
 
-    def _has_pdf_sqlite(self, conn, base_id: int) -> bool:
-        row = conn.execute(
-            "SELECT 1 FROM std_filepath WHERE base_id = ? LIMIT 1", (base_id,)
-        ).fetchone()
-        return row is not None
-
-    def _has_pdf_mysql(self, cur, base_id: int) -> bool:
-        cur.execute(
-            "SELECT 1 FROM std_filepath WHERE base_id = %s LIMIT 1", (base_id,)
+    def _fetch_filepath_batch_sqlite(self, conn, base_ids: list[int]) -> list[dict]:
+        if not base_ids:
+            return []
+        placeholders = ",".join("?" * len(base_ids))
+        cur = conn.execute(
+            f"""
+            SELECT base_id, file_name, file_path
+            FROM std_filepath WHERE base_id IN ({placeholders})
+            """,
+            base_ids,
         )
-        return cur.fetchone() is not None
+        return [dict(r) for r in cur.fetchall()]
+
+    def _fetch_filepath_batch_mysql(self, cur, base_ids: list[int]) -> list[dict]:
+        if not base_ids:
+            return []
+        placeholders = ",".join(["%s"] * len(base_ids))
+        cur.execute(
+            f"""
+            SELECT base_id, file_name, file_path
+            FROM std_filepath WHERE base_id IN ({placeholders})
+            """,
+            base_ids,
+        )
+        return list(cur.fetchall())
+
+    def _lite_items_sqlite(
+        self, conn, rows: list[dict], *, verify_disk: bool = False
+    ) -> list[dict]:
+        if not rows:
+            return []
+        std_map = {int(r["id"]): (r.get("std_id") or "") for r in rows}
+        files = self._fetch_filepath_batch_sqlite(conn, list(std_map.keys()))
+        has_map = batch_has_pdf_map(files, std_map, verify_disk=verify_disk)
+        return [
+            self._row_to_lite(r, has_map.get(int(r["id"]), False)) for r in rows
+        ]
+
+    def _lite_items_mysql(
+        self, cur, rows: list[dict], *, verify_disk: bool = False
+    ) -> list[dict]:
+        if not rows:
+            return []
+        std_map = {int(r["id"]): (r.get("std_id") or "") for r in rows}
+        files = self._fetch_filepath_batch_mysql(cur, list(std_map.keys()))
+        has_map = batch_has_pdf_map(files, std_map, verify_disk=verify_disk)
+        return [
+            self._row_to_lite(r, has_map.get(int(r["id"]), False)) for r in rows
+        ]
+
+    def _has_pdf_sqlite(self, conn, base_id: int, std_id: str = "", verify_disk: bool = False) -> bool:
+        """单条 has_pdf（文件名须含标准号）。"""
+        std_map = {int(base_id): std_id or ""}
+        files = self._fetch_filepath_batch_sqlite(conn, [int(base_id)])
+        return batch_has_pdf_map(files, std_map, verify_disk=verify_disk).get(int(base_id), False)
+
+    def _has_pdf_mysql(
+        self, cur, base_id: int, std_id: str = "", verify_disk: bool = False
+    ) -> bool:
+        std_map = {int(base_id): std_id or ""}
+        files = self._fetch_filepath_batch_mysql(cur, [int(base_id)])
+        return batch_has_pdf_map(files, std_map, verify_disk=verify_disk).get(int(base_id), False)
 
     def _folder_exists_sql(self, std_folder: str | None) -> tuple[str, tuple]:
         if not std_folder:
@@ -465,13 +517,21 @@ class Database:
         *,
         pdf_only: bool = True,
         std_folder: str | None = None,
+        verify_disk: bool = False,
     ) -> dict:
         q = (query or "").strip()
         page = max(1, page)
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
         # Cache lookup
-        cache_params = {"q": q, "page": page, "per_page": per_page, "pdf_only": pdf_only, "std_folder": std_folder}
+        cache_params = {
+            "q": q,
+            "page": page,
+            "per_page": per_page,
+            "pdf_only": pdf_only,
+            "std_folder": std_folder,
+            "verify_disk": verify_disk,
+        }
         cache_key = self._cache_manager.make_cache_key(cache_params)
         cached = self._cache_manager.get_cached(cache_key)
         if cached:
@@ -481,26 +541,37 @@ class Database:
         # Perform the actual query
         if self._mysql_available():
             result = self._search_page_mysql(
-                q, page, per_page, offset, pdf_only, std_folder
+                q, page, per_page, offset, pdf_only, std_folder, verify_disk
             )
         else:
-            result = self._search_page_sqlite(q, page, per_page, offset, pdf_only, std_folder)
+            result = self._search_page_sqlite(
+                q, page, per_page, offset, pdf_only, std_folder, verify_disk
+            )
         # Store result in cache
         self._cache_manager.set_cached(cache_key, result)
         # Asynchronously preload next 1-2 pages
         def _preload():
             for next_page in range(page + 1, page + 3):
                 # Build cache key for the next page
-                next_params = {"q": q, "page": next_page, "per_page": per_page, "pdf_only": pdf_only, "std_folder": std_folder}
+                next_params = {
+                    "q": q,
+                    "page": next_page,
+                    "per_page": per_page,
+                    "pdf_only": pdf_only,
+                    "std_folder": std_folder,
+                    "verify_disk": verify_disk,
+                }
                 next_key = self._cache_manager.make_cache_key(next_params)
                 if self._cache_manager.get_cached(next_key) is None:
                     next_offset = (next_page - 1) * per_page
                     if self._mysql_available():
                         next_res = self._search_page_mysql(
-                            q, next_page, per_page, next_offset, pdf_only, std_folder
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, verify_disk
                         )
                     else:
-                        next_res = self._search_page_sqlite(q, next_page, per_page, next_offset, pdf_only, std_folder)
+                        next_res = self._search_page_sqlite(
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, verify_disk
+                        )
                     self._cache_manager.set_cached(next_key, next_res)
         threading.Thread(target=_preload, daemon=True).start()
         return result
@@ -512,12 +583,20 @@ class Database:
         *,
         pdf_only: bool = True,
         std_folder: str | None = None,
+        verify_disk: bool = False,
     ) -> dict:
         """首页默认列表：按发布年份、标准号倒序。"""
         page = max(1, page)
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
-        cache_params = {"action": "browse", "page": page, "per_page": per_page, "pdf_only": pdf_only, "std_folder": std_folder}
+        cache_params = {
+            "action": "browse",
+            "page": page,
+            "per_page": per_page,
+            "pdf_only": pdf_only,
+            "std_folder": std_folder,
+            "verify_disk": verify_disk,
+        }
         cache_key = self._cache_manager.make_cache_key(cache_params)
         cached = self._cache_manager.get_cached(cache_key)
         if cached:
@@ -525,11 +604,11 @@ class Database:
 
         if self._mysql_available():
             result = self._browse_page_mysql(
-                page, per_page, offset, pdf_only, std_folder
+                page, per_page, offset, pdf_only, std_folder, verify_disk
             )
         else:
             result = self._browse_page_sqlite(
-                page, per_page, offset, pdf_only, std_folder
+                page, per_page, offset, pdf_only, std_folder, verify_disk
             )
 
         self._cache_manager.set_cached(cache_key, result)
@@ -537,14 +616,25 @@ class Database:
         # Asynchronously preload next 2 pages in background
         def _preload():
             for next_page in range(page + 1, page + 3):
-                next_params = {"action": "browse", "page": next_page, "per_page": per_page, "pdf_only": pdf_only, "std_folder": std_folder}
+                next_params = {
+                    "action": "browse",
+                    "page": next_page,
+                    "per_page": per_page,
+                    "pdf_only": pdf_only,
+                    "std_folder": std_folder,
+                    "verify_disk": verify_disk,
+                }
                 next_key = self._cache_manager.make_cache_key(next_params)
                 if self._cache_manager.get_cached(next_key) is None:
                     next_offset = (next_page - 1) * per_page
                     if self._mysql_available():
-                        next_res = self._browse_page_mysql(next_page, per_page, next_offset, pdf_only, std_folder)
+                        next_res = self._browse_page_mysql(
+                            next_page, per_page, next_offset, pdf_only, std_folder, verify_disk
+                        )
                     else:
-                        next_res = self._browse_page_sqlite(next_page, per_page, next_offset, pdf_only, std_folder)
+                        next_res = self._browse_page_sqlite(
+                            next_page, per_page, next_offset, pdf_only, std_folder, verify_disk
+                        )
                     self._cache_manager.set_cached(next_key, next_res)
         threading.Thread(target=_preload, daemon=True).start()
 
@@ -557,15 +647,14 @@ class Database:
         offset: int,
         pdf_only: bool,
         std_folder: str | None,
+        verify_disk: bool = False,
     ) -> dict:
         if not SQLITE_PATH.is_file():
             return self._empty_page(page, per_page, "browse")
         where_parts: list[str] = []
         args: list = []
         if pdf_only:
-            where_parts.append(
-                "EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
-            )
+            where_parts.append(pdf_only_exists_sql(mysql=False))
         folder_sql, folder_args = self._folder_exists_sql(std_folder)
         where = (" AND ".join(where_parts) if where_parts else "1=1") + folder_sql
         args.extend(folder_args)
@@ -586,9 +675,7 @@ class Database:
                 (*args, per_page, offset),
             )
             rows = [dict(r) for r in cur.fetchall()]
-            items = [
-                self._row_to_lite(r, self._has_pdf_sqlite(conn, r["id"])) for r in rows
-            ]
+            items = self._lite_items_sqlite(conn, rows, verify_disk=verify_disk)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,
@@ -608,13 +695,12 @@ class Database:
         offset: int,
         pdf_only: bool,
         std_folder: str | None,
+        verify_disk: bool = False,
     ) -> dict:
         where_parts: list[str] = []
         args: list = []
         if pdf_only:
-            where_parts.append(
-                "EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
-            )
+            where_parts.append(pdf_only_exists_sql(mysql=True))
         folder_sql, folder_args = self._folder_exists_sql(std_folder)
         if folder_sql:
             folder_sql = folder_sql.replace("?", "%s")
@@ -638,9 +724,7 @@ class Database:
                 (*args, per_page, offset),
             )
             rows = list(cur.fetchall())
-            items = [
-                self._row_to_lite(r, self._has_pdf_mysql(cur, r["id"])) for r in rows
-            ]
+            items = self._lite_items_mysql(cur, rows, verify_disk=verify_disk)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,
@@ -671,6 +755,7 @@ class Database:
         offset: int,
         pdf_only: bool,
         std_folder: str | None,
+        verify_disk: bool = False,
     ) -> dict:
         if not SQLITE_PATH.is_file():
             return self._empty_page(page, per_page, "text")
@@ -679,9 +764,7 @@ class Database:
         where_parts = [clause]
         args: list = list(clause_args)
         if pdf_only:
-            where_parts.append(
-                "EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
-            )
+            where_parts.append(pdf_only_exists_sql(mysql=False))
         folder_sql, folder_args = self._folder_exists_sql(std_folder)
         where = " AND ".join(where_parts) + folder_sql
         args.extend(folder_args)
@@ -701,9 +784,7 @@ class Database:
                 (*args, *order_args, per_page, offset),
             )
             rows = [dict(r) for r in cur.fetchall()]
-            items = [
-                self._row_to_lite(r, self._has_pdf_sqlite(conn, r["id"])) for r in rows
-            ]
+            items = self._lite_items_sqlite(conn, rows, verify_disk=verify_disk)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,
@@ -723,15 +804,14 @@ class Database:
         offset: int,
         pdf_only: bool,
         std_folder: str | None,
+        verify_disk: bool = False,
     ) -> dict:
         clause, clause_args = build_keyword_match_clause(q, param="%s", use_std_id_norm=True)
         order_sql, order_args = mysql_keyword_match_order_by(q)
         where_parts = [clause]
         args: list = list(clause_args)
         if pdf_only:
-            where_parts.append(
-                "EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
-            )
+            where_parts.append(pdf_only_exists_sql(mysql=True))
         folder_sql, folder_args = self._folder_exists_sql(std_folder)
         if folder_sql:
             folder_sql = folder_sql.replace("?", "%s")
@@ -754,9 +834,7 @@ class Database:
                 (*args, *order_args, per_page, offset),
             )
             rows = list(cur.fetchall())
-            items = [
-                self._row_to_lite(r, self._has_pdf_mysql(cur, r["id"])) for r in rows
-            ]
+            items = self._lite_items_mysql(cur, rows, verify_disk=verify_disk)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,
@@ -777,6 +855,7 @@ class Database:
         pdf_only: bool = True,
         std_folder: str | None = None,
         filters=None,
+        verify_disk: bool = False,
     ) -> dict:
         """Search with advanced filters and cache the result."""
         from core.search_filters import AdvancedFilters, build_advanced_where
@@ -794,7 +873,15 @@ class Database:
             filter_dict = flt.__dict__
         except Exception:
             filter_dict = {}
-        cache_params = {"q": q, "page": page, "per_page": per_page, "pdf_only": pdf_only, "std_folder": std_folder, "filters": filter_dict}
+        cache_params = {
+            "q": q,
+            "page": page,
+            "per_page": per_page,
+            "pdf_only": pdf_only,
+            "std_folder": std_folder,
+            "filters": filter_dict,
+            "verify_disk": verify_disk,
+        }
         cache_key = self._cache_manager.make_cache_key(cache_params)
         cached = self._cache_manager.get_cached(cache_key)
         if cached:
@@ -803,35 +890,43 @@ class Database:
 
         if needs_geo_filter(flt) and geo_index_ready():
             result = self._search_page_advanced_sqlite(
-                q, page, per_page, offset, pdf_only, std_folder, flt
+                q, page, per_page, offset, pdf_only, std_folder, flt, verify_disk
             )
         elif self._mysql_available():
             result = self._search_page_advanced_mysql(
-                q, page, per_page, offset, pdf_only, std_folder, flt
+                q, page, per_page, offset, pdf_only, std_folder, flt, verify_disk
             )
         else:
             result = self._search_page_advanced_sqlite(
-                q, page, per_page, offset, pdf_only, std_folder, flt
+                q, page, per_page, offset, pdf_only, std_folder, flt, verify_disk
             )
         self._cache_manager.set_cached(cache_key, result)
         # Asynchronously preload next pages for advanced search
         def _preload_adv():
             for next_page in range(page + 1, page + 3):
-                next_params = {"q": q, "page": next_page, "per_page": per_page, "pdf_only": pdf_only, "std_folder": std_folder, "filters": filter_dict}
+                next_params = {
+                    "q": q,
+                    "page": next_page,
+                    "per_page": per_page,
+                    "pdf_only": pdf_only,
+                    "std_folder": std_folder,
+                    "filters": filter_dict,
+                    "verify_disk": verify_disk,
+                }
                 next_key = self._cache_manager.make_cache_key(next_params)
                 if self._cache_manager.get_cached(next_key) is None:
                     next_offset = (next_page - 1) * per_page
                     if needs_geo_filter(flt) and geo_index_ready():
                         next_res = self._search_page_advanced_sqlite(
-                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt, verify_disk
                         )
                     elif self._mysql_available():
                         next_res = self._search_page_advanced_mysql(
-                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt, verify_disk
                         )
                     else:
                         next_res = self._search_page_advanced_sqlite(
-                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt, verify_disk
                         )
                     self._cache_manager.set_cached(next_key, next_res)
         threading.Thread(target=_preload_adv, daemon=True).start()
@@ -846,6 +941,7 @@ class Database:
         pdf_only: bool,
         std_folder: str | None,
         filters,
+        verify_disk: bool = False,
     ) -> dict:
         from core.search_filters import build_advanced_where
 
@@ -880,9 +976,7 @@ class Database:
                 (*args, per_page, offset),
             )
             rows = [dict(r) for r in cur.fetchall()]
-            items = [
-                self._row_to_lite(r, self._has_pdf_sqlite(conn, r["id"])) for r in rows
-            ]
+            items = self._lite_items_sqlite(conn, rows, verify_disk=verify_disk)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,
@@ -903,6 +997,7 @@ class Database:
         pdf_only: bool,
         std_folder: str | None,
         filters,
+        verify_disk: bool = False,
     ) -> dict:
         from core.search_filters import build_advanced_where
 
@@ -935,9 +1030,7 @@ class Database:
                 (*mysql_args, per_page, offset),
             )
             rows = list(cur.fetchall())
-            items = [
-                self._row_to_lite(r, self._has_pdf_mysql(cur, r["id"])) for r in rows
-            ]
+            items = self._lite_items_mysql(cur, rows, verify_disk=verify_disk)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,
@@ -958,6 +1051,7 @@ class Database:
         pdf_only: bool = True,
         std_folder: str | None = None,
         primary_keyword: str | None = None,
+        verify_disk: bool = False,
     ) -> dict:
         kws: list[str] = []
         seen: set[str] = set()
@@ -975,15 +1069,15 @@ class Database:
         primary = (primary_keyword or kws[0]).strip()
         if self._mysql_available():
             return self._search_page_cluster_mysql(
-                kws, primary, page, per_page, offset, pdf_only, std_folder
+                kws, primary, page, per_page, offset, pdf_only, std_folder, verify_disk
             )
         if SQLITE_PATH.is_file():
             return self._search_page_cluster_sqlite(
-                kws, primary, page, per_page, offset, pdf_only, std_folder
+                kws, primary, page, per_page, offset, pdf_only, std_folder, verify_disk
             )
         # Fallback to SQLite if neither backend is confirmed
         return self._search_page_cluster_sqlite(
-            kws, primary, page, per_page, offset, pdf_only, std_folder
+            kws, primary, page, per_page, offset, pdf_only, std_folder, verify_disk
         )
 
     def _cluster_score_sql(
@@ -1018,17 +1112,14 @@ class Database:
         offset: int,
         pdf_only: bool,
         std_folder: str | None,
+        verify_disk: bool = False,
     ) -> dict:
         if not SQLITE_PATH.is_file():
             return self._empty_page(page, per_page, "product_cluster")
         score_sql, score_args = self._cluster_score_sql(keywords, primary, False)
         where_sql, where_args = self._cluster_name_where_sql(keywords, False)
         folder_sql, folder_args = self._folder_exists_sql(std_folder)
-        pdf_sql = (
-            " AND EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
-            if pdf_only
-            else ""
-        )
+        pdf_sql = f" AND {pdf_only_exists_sql(mysql=False)}" if pdf_only else ""
         with self._sqlite() as conn:
             count_sql = f"""
                 SELECT COUNT(DISTINCT b.id) AS c FROM std_base b
@@ -1049,9 +1140,7 @@ class Database:
                 where_args + score_args + list(folder_args) + [per_page, offset],
             )
             rows = [dict(r) for r in cur.fetchall()]
-            items = [
-                self._row_to_lite(r, self._has_pdf_sqlite(conn, r["id"])) for r in rows
-            ]
+            items = self._lite_items_sqlite(conn, rows, verify_disk=verify_disk)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,
@@ -1072,17 +1161,14 @@ class Database:
         offset: int,
         pdf_only: bool,
         std_folder: str | None,
+        verify_disk: bool = False,
     ) -> dict:
         score_sql, score_args = self._cluster_score_sql(keywords, primary, True)
         where_sql, where_args = self._cluster_name_where_sql(keywords, True)
         folder_sql, folder_args = self._folder_exists_sql(std_folder)
         if folder_sql:
             folder_sql = folder_sql.replace("?", "%s")
-        pdf_sql = (
-            " AND EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
-            if pdf_only
-            else ""
-        )
+        pdf_sql = f" AND {pdf_only_exists_sql(mysql=True)}" if pdf_only else ""
         with self._mysql() as conn:
             cur = conn.cursor()
             count_sql = f"""
@@ -1103,9 +1189,7 @@ class Database:
                 where_args + score_args + list(folder_args) + [per_page, offset],
             )
             rows = list(cur.fetchall())
-            items = [
-                self._row_to_lite(r, self._has_pdf_mysql(cur, r["id"])) for r in rows
-            ]
+            items = self._lite_items_mysql(cur, rows, verify_disk=verify_disk)
         total_pages = (total + per_page - 1) // per_page if total else 0
         return {
             "total": total,

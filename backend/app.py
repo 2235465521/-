@@ -21,6 +21,7 @@ from core.batch_download import (  # noqa: E402
     build_zip_archive,
     build_zip_from_base_ids,
     build_zip_from_geo,
+    compose_download_filename,
     parse_upload,
     preview_items,
 )
@@ -124,6 +125,7 @@ def api_search():
         page = max(1, int(request.args.get("page", 1)))
         per_page = min(50, max(1, int(request.args.get("per_page", 10))))
         scan_disk = request.args.get("scan_disk", "0") != "0"
+        verify_disk = request.args.get("verify_disk", "0") != "0" or scan_disk
         pdf_only = request.args.get("pdf_only", "1") != "0"
         enrich = request.args.get("enrich", "0") == "1"
 
@@ -134,7 +136,7 @@ def api_search():
             if not q:
                 return jsonify({"ok": False, "error": "请输入产品名称，如：牙膏"}), 400
             data = product_search.search_page(
-                q, page=page, per_page=per_page, pdf_only=pdf_only
+                q, page=page, per_page=per_page, pdf_only=pdf_only, verify_disk=verify_disk
             )
             if data.get("error"):
                 return jsonify({"ok": False, "error": data["error"]}), 400
@@ -174,7 +176,7 @@ def api_search():
         if not q and not filters.active():
             if request.args.get("browse") == "1":
                 data = db.browse_page(
-                    page=page, per_page=per_page, pdf_only=pdf_only
+                    page=page, per_page=per_page, pdf_only=pdf_only, verify_disk=verify_disk
                 )
                 if enrich:
                     data["items"] = _enrich_items(
@@ -208,9 +210,12 @@ def api_search():
                 per_page=per_page,
                 pdf_only=pdf_only,
                 filters=filters,
+                verify_disk=verify_disk,
             )
         else:
-            data = db.search_page(q, page=page, per_page=per_page, pdf_only=pdf_only)
+            data = db.search_page(
+                q, page=page, per_page=per_page, pdf_only=pdf_only, verify_disk=verify_disk
+            )
 
         if enrich:
             data["items"] = _enrich_items(
@@ -427,7 +432,8 @@ def api_download_file(file_id: int):
     if preview:
         mime = mimetypes.guess_type(found.name)[0] or "application/pdf"
         return send_file(found, mimetype=mime, as_attachment=False)
-    return send_file(found, as_attachment=True, download_name=found.name)
+    dl_name = compose_download_filename(std_id or "", found.name)
+    return send_file(found, as_attachment=True, download_name=dl_name)
 
 
 @app.route("/api/download-std/<int:base_id>/<int:disk_index>")
@@ -446,7 +452,8 @@ def api_download_std_disk(base_id: int, disk_index: int):
     if preview:
         mime = mimetypes.guess_type(path.name)[0] or "application/pdf"
         return send_file(path, mimetype=mime, as_attachment=False)
-    return send_file(path, as_attachment=True, download_name=path.name)
+    dl_name = compose_download_filename(std.std_id or "", path.name)
+    return send_file(path, as_attachment=True, download_name=dl_name)
 
 
 @app.route("/api/tuangbiao/<int:file_id>/download")

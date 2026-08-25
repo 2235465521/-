@@ -798,6 +798,9 @@
     params.set("per_page", String(PER_PAGE));
     params.set("enrich", "0");
     params.set("scan_disk", scanDiskEnabled() ? "1" : "0");
+    if (scanDiskEnabled()) {
+      params.set("verify_disk", "1");
+    }
     if (currentMode === "tuangbiao") {
       params.set("source", "tuangbiao");
     }
@@ -909,6 +912,9 @@
     params.set("per_page", String(PER_PAGE));
     params.set("enrich", "0");
     params.set("scan_disk", scanDiskEnabled() ? "1" : "0");
+    if (scanDiskEnabled()) {
+      params.set("verify_disk", "1");
+    }
     if (currentMode === "product") {
       params.set("source", "product");
     } else if (isCatalogMode(currentMode)) {

@@ -136,6 +136,9 @@ def product_keywords(product: str) -> list[str]:
     return kws if kws else [p]
 
 
+from core.pdf_availability import pdf_only_exists_sql
+
+
 def build_advanced_where(
     filters: AdvancedFilters,
     q: str,
@@ -213,9 +216,8 @@ def build_advanced_where(
         args.extend(folder_args)
 
     if pdf_only:
-        clauses.append(
-            "EXISTS (SELECT 1 FROM std_filepath f WHERE f.base_id = b.id)"
-        )
+        mysql = param == "%s"
+        clauses.append(pdf_only_exists_sql(mysql=mysql))
 
     if not clauses:
         return "", []

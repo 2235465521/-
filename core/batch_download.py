@@ -307,13 +307,20 @@ def resolve_item_cached(item: dict | str, *, scan_disk: bool = True) -> dict[str
     return res
 
 
+def compose_download_filename(std_id: str, original: str) -> str:
+    """下载/ZIP 内文件名：标准号 + 原 PDF 文件名（净化非法字符）。"""
+    sid = (std_id or "").strip()
+    sid_compact = sid.replace("／", "/").replace("/", "").replace(" ", "")
+    sid_safe = re.sub(r'[<>:"\\|?*\x00-\x1f]', "_", sid_compact)[:80] or "unknown"
+    orig_name = Path((original or "").replace("\\", "/")).name.strip()
+    name_safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", orig_name)[:200]
+    if not name_safe:
+        name_safe = "document.pdf"
+    return f"{sid_safe}_{name_safe}"
+
+
 def _safe_zip_name(std_id: str, original: str) -> str:
-    base = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", std_id or "unknown")
-    base = base.replace(" ", "")[:80] or "unknown"
-    suffix = Path(original).suffix or ".pdf"
-    stem = Path(original).stem
-    stem_safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", stem)[:60]
-    return f"{base}_{stem_safe}{suffix}"
+    return compose_download_filename(std_id, original)
 
 
 def _unique_name(used: set[str], name: str) -> str:
