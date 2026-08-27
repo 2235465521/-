@@ -568,7 +568,16 @@ def api_batch_parse():
         return jsonify({"ok": False, "error": "文件为空"}), 400
     if len(data) > 20 * 1024 * 1024:
         return jsonify({"ok": False, "error": "文件过大（上限 20MB）"}), 400
-    result = parse_upload(upload.filename, data)
+    
+    max_rows_raw = request.form.get("max_rows") or request.args.get("max_rows")
+    max_rows = None
+    if max_rows_raw is not None:
+        try:
+            max_rows = int(max_rows_raw)
+        except (ValueError, TypeError):
+            pass
+
+    result = parse_upload(upload.filename, data, max_rows=max_rows)
     status = 200 if result.get("ok") else 400
     return jsonify(result), status
 
@@ -582,7 +591,13 @@ def api_batch_preview():
     scan_disk = body.get("scan_disk", False)
     if not db.is_ready() and not scan_disk:
         return jsonify({"ok": False, "error": "标准库未就绪，请先构建索引或勾选「扫描磁盘」"}), 503
-    return jsonify(preview_items(items, scan_disk=scan_disk))
+    max_rows = body.get("max_rows")
+    if max_rows is not None:
+        try:
+            max_rows = int(max_rows)
+        except (ValueError, TypeError):
+            max_rows = None
+    return jsonify(preview_items(items, max_rows=max_rows, scan_disk=scan_disk))
 
 
 @app.route("/api/batch/download", methods=["POST"])
@@ -594,11 +609,19 @@ def api_batch_download():
     original_filename: str | None = None
     parse_meta: dict | None = None
 
+    max_rows_raw = request.form.get("max_rows") or request.args.get("max_rows")
+    max_rows = None
+    if max_rows_raw is not None:
+        try:
+            max_rows = int(max_rows_raw)
+        except (ValueError, TypeError):
+            pass
+
     if request.files.get("file"):
         upload = request.files["file"]
         original_filename = upload.filename or "upload.xlsx"
         original_data = upload.read()
-        parsed = parse_upload(original_filename, original_data)
+        parsed = parse_upload(original_filename, original_data, max_rows=max_rows)
         if not parsed.get("ok"):
             return jsonify(parsed), 400
         parse_meta = parsed.get("meta")

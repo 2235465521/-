@@ -17,11 +17,15 @@
   const batchSteps = el("batchSteps");
   const btnBatchBack = el("btnBatchBack");
 
-  // 新增控制元素
   const btnBatchCancelPreview = el("btnBatchCancelPreview");
   const btnSelectAllRows = el("btnSelectAllRows");
   const btnSelectNoneRows = el("btnSelectNoneRows");
   const btnSelectPdfOnlyRows = el("btnSelectPdfOnlyRows");
+
+  // 自定义上限相关元素
+  const batchMaxRowsInput = el("batchMaxRowsInput");
+  const batchLimitChips = el("batchLimitChips");
+  const batchCardDesc = el("batchCardDesc");
 
   let parsedItems = [];
   let parsedMeta = null;
@@ -30,13 +34,41 @@
   let previewAbortController = null;
   let downloadAbortController = null;
 
+  function getMaxRowsSetting() {
+    const val = batchMaxRowsInput ? batchMaxRowsInput.value.trim() : "";
+    if (val === "" || val === "0" || val.toLowerCase() === "all") {
+      return 0; // 0 代表不限制
+    }
+    const num = parseInt(val, 10);
+    return isNaN(num) || num < 0 ? 0 : num;
+  }
+
+  function syncLimitUI(limitVal) {
+    const num = limitVal !== undefined && limitVal !== null ? Number(limitVal) : getMaxRowsSetting();
+    if (batchMaxRowsInput) {
+      batchMaxRowsInput.value = num === 0 ? "" : String(num);
+    }
+    if (batchLimitChips) {
+      batchLimitChips.querySelectorAll(".btn-limit-chip").forEach(btn => {
+        const d = Number(btn.dataset.limit);
+        if ((num === 0 && d === 0) || (num > 0 && d === num)) {
+          btn.classList.add("active");
+        } else {
+          btn.classList.remove("active");
+        }
+      });
+    }
+    const descText = num === 0 ? "支持 .xlsx、.xlsm、.csv，当前：全量解析（不限条数）" : `支持 .xlsx、.xlsm、.csv，当前上限：${num} 条`;
+    if (batchCardDesc) batchCardDesc.textContent = descText;
+    setMeta(`后端模式 · 自动读 E 盘 · 支持 .xlsx / .csv · ${num === 0 ? "全量不限" : `上限 ${num} 条`}`);
+  }
+
   function escapeHtml(s) {
     const d = document.createElement("div");
     d.textContent = s || "";
     return d.innerHTML;
   }
 
-  // 修改此处的 statusLabel 函数，将 not_found / no_pdf 显示得更精确
   function statusLabel(status) {
     const map = {
       ok: "可下载",
@@ -63,7 +95,6 @@
     });
   }
 
-  // 清除已上传的文件与状态
   function clearUploadedFile() {
     if (batchFile) batchFile.value = "";
     parsedItems = [];
@@ -78,7 +109,6 @@
     setFileName("");
   }
 
-  // 显示当前操作文件的名称
   function setFileName(name) {
     if (!batchFileName) return;
     if (name) {
@@ -235,8 +265,15 @@
       }
     }, 5000);
 
+    const maxRows = getMaxRowsSetting();
     const fd = new FormData();
     fd.append("file", file);
+    if (maxRows > 0) {
+      fd.append("max_rows", String(maxRows));
+    } else {
+      fd.append("max_rows", "0");
+    }
+
     try {
       const res = await fetch("/api/batch/parse", { method: "POST", body: fd });
       const data = await res.json();
@@ -251,7 +288,7 @@
       parsedMeta = data.meta || null;
       selectedRows = new Set(parsedItems.map(it => it.row));
       
-      const trunc = parsedMeta?.truncated ? `（已达上限 ${parsedMeta.max_rows} 条）` : "";
+      const trunc = parsedMeta?.truncated ? `（已达当前上限 ${parsedMeta.max_rows} 条，可在上方调整上限）` : "";
       setMeta(`已识别 ${parsedItems.length} 条标准号${trunc}`);
       renderTable();
       setStep(2);
@@ -273,7 +310,6 @@
       setFeedback('<div class="alert">请先解析 Excel</div>');
       return;
     }
-    // 如果已经有预览缓存，则直接展示结果并还原复选状态，避免重新请求和重新加载
     if (previewMap.size > 0) {
       showTableSection(true);
       renderTable();
@@ -300,6 +336,7 @@
       }
     }, 5000);
 
+    const maxRows = getMaxRowsSetting();
     try {
       const res = await fetch("/api/batch/preview", {
         method: "POST",
@@ -307,6 +344,7 @@
         signal: previewAbortController.signal,
         body: JSON.stringify({
           items: parsedItems,
+          max_rows: maxRows,
           scan_disk: true,
         }),
       });
@@ -324,7 +362,7 @@
       setStep(3);
       const s = data.summary || {};
       setFeedback(
-        `<div class="batch-hint">预览完成：共 ${s.total} 条，预计可下载 <strong>${s.success}</strong> 个 PDF，失败 ${s.failed} 条。</div>`
+        `<div class="batch-hint">预览完成：共 ${s.total} 条，预计可下载 <strong>${s.success}</strong> 个 PDF，失败 ${failed} 条。</div>`
       );
     } catch (e) {
       if (e.name === "AbortError") {
@@ -388,6 +426,12 @@
       fd.append("file", file);
       fd.append("items", JSON.stringify(downloadItems));
       fd.append("only_pdf", onlyPdf ? "1" : "0");
+      const maxRows = getMaxRowsSetting();
+      if (maxRows > 0) {
+        fd.append("max_rows", String(maxRows));
+      } else {
+        fd.append("max_rows", "0");
+      }
       
       const res = await fetch(`/api/batch/download?scan_disk=${scan ? "1" : "0"}&only_pdf=${onlyPdf ? "1" : "0"}`, {
         method: "POST",
@@ -544,11 +588,49 @@
     });
   });
 
+  // 上限配置快捷按钮绑定与输入框监听
+  if (batchLimitChips) {
+    batchLimitChips.querySelectorAll(".btn-limit-chip").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const limit = Number(btn.dataset.limit || 0);
+        try {
+          localStorage.setItem("batch_max_rows", String(limit));
+        } catch (e) {}
+        syncLimitUI(limit);
+        if (batchFile?.files?.[0]) {
+          setFeedback('<div class="batch-hint">已更新解析上限设置，请点击「<strong>解析文件</strong>」以应用新上限。</div>');
+        }
+      });
+    });
+  }
+
+  if (batchMaxRowsInput) {
+    batchMaxRowsInput.addEventListener("input", () => {
+      const val = getMaxRowsSetting();
+      try {
+        localStorage.setItem("batch_max_rows", String(val));
+      } catch (e) {}
+      syncLimitUI(val);
+      if (batchFile?.files?.[0]) {
+        setFeedback('<div class="batch-hint">已更新解析上限设置，请点击「<strong>解析文件</strong>」以应用新上限。</div>');
+      }
+    });
+  }
+
+  // 读取本地存储的历史上限偏好（默认 2000）
+  let savedLimit = 2000;
+  try {
+    const raw = localStorage.getItem("batch_max_rows");
+    if (raw !== null && raw !== "") {
+      savedLimit = Number(raw);
+    }
+  } catch (e) {}
+  syncLimitUI(savedLimit);
+
   if (btnBatchParse) btnBatchParse.addEventListener("click", doParse);
   if (btnBatchPreview) btnBatchPreview.addEventListener("click", doPreview);
   if (btnBatchDownload) btnBatchDownload.addEventListener("click", doDownload);
 
-  setMeta("后端模式 · 自动读 E 盘 · 支持 .xlsx / .csv · 单次最多 400 条");
   setStep(1);
 
   fetch("/api/meta/health")

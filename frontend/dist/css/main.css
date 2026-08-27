@@ -1911,6 +1911,89 @@
       flex-shrink: 0;
       accent-color: var(--accent);
     }
+    .batch-limit-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      padding: 0.65rem 0.85rem;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 0.2rem;
+    }
+    .batch-limit-label {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.84rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+    .batch-limit-label svg {
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+    .batch-limit-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .batch-limit-quick-chips {
+      display: inline-flex;
+      gap: 0.3rem;
+      background: #e2e8f0;
+      padding: 2px;
+      border-radius: 8px;
+    }
+    .btn-limit-chip {
+      background: transparent;
+      border: none;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #64748b;
+      padding: 0.25rem 0.6rem;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-limit-chip:hover {
+      color: var(--text-primary);
+    }
+    .btn-limit-chip.active {
+      background: #ffffff;
+      color: var(--accent);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .batch-limit-input-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      position: relative;
+    }
+    .batch-limit-input {
+      width: 5.2rem;
+      padding: 0.25rem 0.45rem;
+      font-size: 0.82rem;
+      font-family: inherit;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--text-primary);
+      text-align: center;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .batch-limit-input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+    .batch-limit-unit {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
     .batch-actions {
       display: flex;
       flex-wrap: wrap;

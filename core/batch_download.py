@@ -16,7 +16,9 @@ from core.pdf_discovery import discover_pdfs_on_disk, check_file_exists_in_cache
 from core.pdf_service import collect_files_for_standard, pick_pdf_path
 from core.std_normalize import normalize_std_id
 
-MAX_ROWS = 400
+import os
+
+DEFAULT_MAX_ROWS = int(os.getenv("BATCH_MAX_ROWS", "2000"))
 DISK_TIMEOUT = 12
 
 _STD_HEADER_KEYS = (
@@ -118,8 +120,12 @@ def _should_skip_row(query: str) -> bool:
 
 
 def _rows_from_matrix(
-    raw_rows: list[list[str]], *, source: str
+    raw_rows: list[list[str]], *, source: str, max_rows: int | None = None
 ) -> tuple[list[dict], dict[str, Any]]:
+    effective_limit = max_rows if max_rows is not None else DEFAULT_MAX_ROWS
+    # 当 effective_limit <= 0 时表示不设上限（全量读取）
+    is_unlimited = effective_limit is not None and effective_limit <= 0
+
     if not raw_rows:
         return [], {"source": source, "columns": {}, "header_row": None, "total_rows": 0}
 
@@ -166,28 +172,32 @@ def _rows_from_matrix(
                 else "",
             }
         )
-        if len(items) >= MAX_ROWS:
+        if not is_unlimited and effective_limit and len(items) >= effective_limit:
             break
+
+    is_truncated = False
+    if not is_unlimited and effective_limit:
+        is_truncated = len(raw_rows) - start > len(items) and len(items) >= effective_limit
 
     meta = {
         "source": source,
         "columns": cols,
         "header_row": header_row_idx + 1 if header_row_idx >= 0 else None,
         "total_rows": len(items),
-        "truncated": len(raw_rows) - start > len(items) and len(items) >= MAX_ROWS,
-        "max_rows": MAX_ROWS,
+        "truncated": is_truncated,
+        "max_rows": 0 if is_unlimited else effective_limit,
     }
     return items, meta
 
 
-def _parse_csv(data: bytes) -> tuple[list[dict], dict[str, Any]]:
+def _parse_csv(data: bytes, max_rows: int | None = None) -> tuple[list[dict], dict[str, Any]]:
     text = data.decode("utf-8-sig", errors="replace")
     reader = csv.reader(io.StringIO(text))
     raw_rows = [[_cell_text(c) for c in row] for row in reader]
-    return _rows_from_matrix(raw_rows, source="csv")
+    return _rows_from_matrix(raw_rows, source="csv", max_rows=max_rows)
 
 
-def _parse_xlsx(data: bytes) -> tuple[list[dict], dict[str, Any]]:
+def _parse_xlsx(data: bytes, max_rows: int | None = None) -> tuple[list[dict], dict[str, Any]]:
     try:
         from openpyxl import load_workbook
     except ImportError as exc:
@@ -203,15 +213,15 @@ def _parse_xlsx(data: bytes) -> tuple[list[dict], dict[str, Any]]:
                 raw_rows.append(cells)
     finally:
         wb.close()
-    return _rows_from_matrix(raw_rows, source="xlsx")
+    return _rows_from_matrix(raw_rows, source="xlsx", max_rows=max_rows)
 
 
-def parse_upload(filename: str, data: bytes) -> dict[str, Any]:
+def parse_upload(filename: str, data: bytes, max_rows: int | None = None) -> dict[str, Any]:
     ext = Path(filename or "").suffix.casefold()
     if ext == ".csv":
-        items, meta = _parse_csv(data)
+        items, meta = _parse_csv(data, max_rows=max_rows)
     elif ext in (".xlsx", ".xlsm"):
-        items, meta = _parse_xlsx(data)
+        items, meta = _parse_xlsx(data, max_rows=max_rows)
     else:
         return {
             "ok": False,
@@ -641,12 +651,19 @@ def build_zip_from_base_ids(
     return build_zip_archive(items, scan_disk=scan_disk)
 
 
-def preview_items(items: list[dict], *, scan_disk: bool = False) -> dict[str, Any]:
-    target_items = [it for it in items[:MAX_ROWS] if (it.get("query") or "").strip()]
+def preview_items(
+    items: list[dict], *, max_rows: int | None = None, scan_disk: bool = False
+) -> dict[str, Any]:
+    effective_limit = max_rows if max_rows is not None else DEFAULT_MAX_ROWS
+    if effective_limit is not None and effective_limit > 0:
+        target_items = [it for it in items[:effective_limit] if (it.get("query") or "").strip()]
+    else:
+        target_items = [it for it in items if (it.get("query") or "").strip()]
+
     if not target_items:
         return {"ok": True, "items": [], "summary": {"total": 0, "success": 0, "failed": 0}}
 
-    max_workers = min(16, max(1, len(target_items)))
+    max_workers = min(32, max(1, len(target_items)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         rows = list(executor.map(lambda item: resolve_item_cached(item, scan_disk=scan_disk), target_items))
 

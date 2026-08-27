@@ -1,6 +1,6 @@
 /** 浏览器端 Excel/CSV 解析（不依赖后端） */
 window.BatchParse = (function () {
-  const MAX_ROWS = 400;
+  const DEFAULT_MAX_ROWS = 2000;
 
   const STD_HEADER_KEYS = [
     "标准编号", "标准号", "编号", "std_id", "stdid", "标准代码", "标准代号", "标准文号",
@@ -67,7 +67,10 @@ window.BatchParse = (function () {
     return false;
   }
 
-  function rowsFromMatrix(rawRows, source) {
+  function rowsFromMatrix(rawRows, source, maxRows) {
+    const effectiveLimit = maxRows !== undefined && maxRows !== null ? Number(maxRows) : DEFAULT_MAX_ROWS;
+    const isUnlimited = effectiveLimit <= 0;
+
     if (!rawRows.length) {
       return { ok: false, error: "文件为空", items: [], meta: {} };
     }
@@ -101,7 +104,7 @@ window.BatchParse = (function () {
         query,
         name_hint: cols.name_col != null && cols.name_col < cells.length ? cellText(cells[cols.name_col]) : "",
       });
-      if (items.length >= MAX_ROWS) break;
+      if (!isUnlimited && effectiveLimit > 0 && items.length >= effectiveLimit) break;
     }
     if (!items.length) {
       return {
@@ -111,6 +114,7 @@ window.BatchParse = (function () {
         meta: { source, header_row: headerIdx + 1 },
       };
     }
+    const isTruncated = !isUnlimited && effectiveLimit > 0 && items.length >= effectiveLimit;
     return {
       ok: true,
       items,
@@ -118,13 +122,13 @@ window.BatchParse = (function () {
         source,
         header_row: headerIdx >= 0 ? headerIdx + 1 : null,
         total_rows: items.length,
-        truncated: items.length >= MAX_ROWS,
-        max_rows: MAX_ROWS,
+        truncated: isTruncated,
+        max_rows: isUnlimited ? 0 : effectiveLimit,
       },
     };
   }
 
-  function parseCsv(data) {
+  function parseCsv(data, maxRows) {
     const text = new TextDecoder("utf-8").decode(data);
     const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
     const rawRows = lines
@@ -149,10 +153,10 @@ window.BatchParse = (function () {
         return cells.map(c => cellText(c));
       })
       .filter(r => r.some(c => c));
-    return rowsFromMatrix(rawRows, "csv");
+    return rowsFromMatrix(rawRows, "csv", maxRows);
   }
 
-  function parseXlsx(data) {
+  function parseXlsx(data, maxRows) {
     if (typeof XLSX === "undefined") {
       return { ok: false, error: "Excel 组件未加载", items: [], meta: {} };
     }
@@ -160,13 +164,13 @@ window.BatchParse = (function () {
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
     const rawRows = rows.map(r => (Array.isArray(r) ? r.map(cellText) : [])).filter(r => r.some(c => c));
-    return rowsFromMatrix(rawRows, "xlsx");
+    return rowsFromMatrix(rawRows, "xlsx", maxRows);
   }
 
-  function parseFile(filename, arrayBuffer) {
+  function parseFile(filename, arrayBuffer, maxRows) {
     const ext = (filename || "").split(".").pop().toLowerCase();
-    if (ext === "csv") return parseCsv(arrayBuffer);
-    if (ext === "xlsx" || ext === "xlsm") return parseXlsx(arrayBuffer);
+    if (ext === "csv") return parseCsv(arrayBuffer, maxRows);
+    if (ext === "xlsx" || ext === "xlsm") return parseXlsx(arrayBuffer, maxRows);
     return { ok: false, error: "仅支持 .xlsx、.xlsm 或 .csv", items: [], meta: {} };
   }
 
