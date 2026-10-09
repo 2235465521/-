@@ -21,7 +21,7 @@ def pdf_only_exists_sql(mysql: bool = False) -> str:
     fn = _compact_sql_expr("f.file_name")
     sid = _compact_sql_expr("b.std_id")
     if mysql:
-        like_expr = f"CONCAT('%', {sid}, '%')"
+        like_expr = f"CONCAT('%%', {sid}, '%%') COLLATE utf8mb4_general_ci"
     else:
         like_expr = f"'%' || {sid} || '%'"
     return (

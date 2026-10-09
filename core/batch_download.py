@@ -236,6 +236,94 @@ def parse_upload(filename: str, data: bytes, max_rows: int | None = None) -> dic
     return {"ok": True, "items": items, "meta": meta}
 
 
+def parse_text(text: str, *, max_rows: int | None = None) -> dict[str, Any]:
+    effective_limit = max_rows if max_rows is not None else DEFAULT_MAX_ROWS
+    is_unlimited = effective_limit is not None and effective_limit <= 0
+
+    lines = [line.strip() for line in (text or "").splitlines()]
+    items: list[dict] = []
+
+    def _is_valid_std_token(s: str) -> bool:
+        s = (s or "").strip()
+        return bool(re.search(r"\d", s) and looks_like_std_number(s))
+
+    row_count = 0
+    for line in lines:
+        if not line:
+            continue
+        row_count += 1
+        cleaned = re.sub(r"^(?:[\(\[\{（【]?\d+[\)\]\}）】]?[\.、\s\-]+)", "", line).strip()
+        if not cleaned:
+            continue
+
+        query = ""
+        name_hint = ""
+
+        if "\t" in cleaned:
+            parts = [p.strip() for p in cleaned.split("\t", 1) if p.strip()]
+            query = parts[0]
+            if len(parts) > 1:
+                name_hint = parts[1]
+        elif "," in cleaned and not looks_like_std_number(cleaned):
+            parts = [p.strip() for p in cleaned.split(",", 1) if p.strip()]
+            query = parts[0]
+            if len(parts) > 1:
+                name_hint = parts[1]
+        elif "，" in cleaned and not looks_like_std_number(cleaned):
+            parts = [p.strip() for p in cleaned.split("，", 1) if p.strip()]
+            query = parts[0]
+            if len(parts) > 1:
+                name_hint = parts[1]
+        else:
+            parts = re.split(r"[ \t]+", cleaned, maxsplit=1)
+            if len(parts) == 2 and _is_valid_std_token(parts[0]):
+                query = parts[0]
+                name_hint = parts[1]
+            elif len(parts) == 2:
+                sub_parts = re.split(r"[ \t]+", cleaned, maxsplit=2)
+                if len(sub_parts) >= 2 and _is_valid_std_token(sub_parts[0] + " " + sub_parts[1]):
+                    query = f"{sub_parts[0]} {sub_parts[1]}"
+                    name_hint = sub_parts[2] if len(sub_parts) > 2 else ""
+                else:
+                    query = cleaned
+            else:
+                query = cleaned
+
+        if not query:
+            continue
+
+        items.append({
+            "row": len(items) + 1,
+            "query": query,
+            "std_hint": query,
+            "name_hint": name_hint,
+        })
+
+        if not is_unlimited and effective_limit and len(items) >= effective_limit:
+            break
+
+    if not items:
+        return {
+            "ok": False,
+            "error": "未在粘贴文本中检测到有效标准内容，请检查后重试",
+        }
+
+    is_truncated = False
+    if not is_unlimited and effective_limit:
+        is_truncated = row_count > len(items) and len(items) >= effective_limit
+
+    meta = {
+        "source": "text",
+        "columns": {"std_col": 0, "name_col": 1 if any(it["name_hint"] for it in items) else None, "remark_col": None},
+        "header_row": None,
+        "total_rows": len(items),
+        "truncated": is_truncated,
+        "max_rows": 0 if is_unlimited else effective_limit,
+    }
+
+    return {"ok": True, "items": items, "meta": meta}
+
+
 def resolve_item(query: str, *, scan_disk: bool = True) -> dict[str, Any]:
     q = (query or "").strip()
     if not q:
@@ -482,6 +570,54 @@ def build_template_xlsx() -> bytes:
     return buf.getvalue()
 
 
+def build_result_excel(results: list[dict]) -> tuple[bytes, str]:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "标准下载结果"
+
+    thin = Side(style="thin", color="CBD5E1")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_font = Font(name="Microsoft YaHei", size=10, bold=True, color="1E40AF")
+    body_font = Font(name="Microsoft YaHei", size=10, color="334155")
+    header_fill = PatternFill("solid", fgColor="EFF6FF")
+
+    headers = ["序号", "标准号", "标准名称", "下载状态", "备注"]
+    ws.append(headers)
+    for r in results:
+        status_label = "成功" if r.get("status") == "ok" else "未找到/无PDF"
+        ws.append([
+            r.get("row") or "",
+            r.get("std_id") or r.get("query") or "",
+            r.get("std_name") or r.get("name_hint") or "",
+            status_label,
+            "" if r.get("status") == "ok" else "否",
+        ])
+
+    for row in ws.iter_rows(min_row=1, max_row=1):
+        for cell in row:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        for cell in row:
+            cell.font = body_font
+            cell.border = border
+
+    ws.column_dimensions["A"].width = 8
+    ws.column_dimensions["B"].width = 24
+    ws.column_dimensions["C"].width = 38
+    ws.column_dimensions["D"].width = 14
+    ws.column_dimensions["E"].width = 12
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue(), "标准批量下载结果清单.xlsx"
+
+
 def build_zip_archive(
     items: list[dict],
     *,
@@ -511,8 +647,8 @@ def build_zip_archive(
 
     resolved_items.sort(key=lambda x: x[0])
 
-    # 2. 将匹配成功的 PDF 文件高效写入 ZIP 包 (优化 compresslevel=1 以提高文件生成速率)
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+    # 2. 将匹配成功的 PDF 文件高效写入 ZIP 包（PDF采用 ZIP_STORED 直存，免去二次压缩计算，极大缩短打包时间；清单文件保持 DEFLATE 压缩）
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
         total = len(resolved_items)
         for idx, resolved in resolved_items:
             if progress:
@@ -529,19 +665,33 @@ def build_zip_archive(
                 if not only_pdf:
                     results.append(resolved)
                 continue
-            results.append(resolved)
             prefix = f"{row_no:03d}_"
             entry_name = _unique_name(used_names, prefix + resolved["zip_name"])
-            zf.write(pdf_path, arcname=f"PDF/{entry_name}")
-            resolved["zip_entry"] = entry_name
-            ok_count += 1
+            try:
+                # PDF 内部已有压缩，使用 STORED 直存写入，提升百倍打包吞吐
+                zf.write(pdf_path, arcname=f"PDF/{entry_name}", compress_type=zipfile.ZIP_STORED)
+                resolved["zip_entry"] = entry_name
+                ok_count += 1
+                results.append(resolved)
+            except Exception as read_err:
+                # 异常隔离：单个文件读取失败不中断整个打包任务
+                resolved["status"] = "read_error"
+                resolved["message"] = f"文件读取异常: {read_err}"
+                if not only_pdf:
+                    results.append(resolved)
 
         if original_data and original_filename:
             try:
                 xbytes, xname = build_annotated_excel(
                     original_data, original_filename, results, parse_meta
                 )
-                zf.writestr(xname, xbytes)
+                zf.writestr(xname, xbytes, compress_type=zipfile.ZIP_DEFLATED)
+            except Exception:
+                pass
+        else:
+            try:
+                xbytes, xname = build_result_excel(results)
+                zf.writestr(xname, xbytes, compress_type=zipfile.ZIP_DEFLATED)
             except Exception:
                 pass
 

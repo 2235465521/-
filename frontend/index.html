@@ -252,45 +252,112 @@
               </ol>
             </header>
 
-            <div class="batch-grid batch-grid-2">
-              <section class="batch-card batch-card-template">
-                <div class="batch-card-head">
-                  <div class="batch-card-icon batch-icon-template" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>
-                  </div>
-                  <div>
-                    <h3 class="batch-card-title">Excel 输入模板</h3>
-                    <p class="batch-card-desc">三列即可，备注列留空由系统自动填写</p>
-                  </div>
-                </div>
-                <div class="batch-template-preview" aria-hidden="true">
-                  <div class="preview-sheet">
-                    <div class="preview-row preview-head"><span>标准号</span><span>标准名</span><span>备注</span></div>
-                    <div class="preview-row"><span>GB/T 1002-2024</span><span>插座</span><span class="preview-auto">自动</span></div>
-                    <div class="preview-row"><span>GB 4785-2019</span><span>汽车灯</span><span class="preview-auto">自动</span></div>
-                  </div>
-                </div>
-                <ul class="batch-card-list">
-                  <li><strong>标准号</strong> — 必填，用于库内检索与 E 盘匹配</li>
-                  <li><strong>标准名</strong> — 选填，便于核对</li>
-                  <li><strong>备注</strong> — 未找到 PDF 时自动填「否」</li>
-                </ul>
-                <button type="button" class="btn-template" id="btnBatchTemplate">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0l4-4m-4 4l-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
-                  下载 Excel 模板
+            <!-- 批量输入方式切换 Tabs -->
+            <div class="batch-mode-switch-wrap">
+              <div class="batch-mode-tabs" role="tablist" aria-label="批量输入方式">
+                <button type="button" class="btn-batch-tab is-active" id="tabBatchExcel" data-mode="excel">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" aria-hidden="true">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>
+                  </svg>
+                  <span>Excel 表格导入</span>
                 </button>
+                <button type="button" class="btn-batch-tab" id="tabBatchText" data-mode="text">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" aria-hidden="true">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                  </svg>
+                  <span>粘贴文本下载</span>
+                  <span class="tab-badge-pill">免建表 · 快捷</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="batch-grid batch-grid-2" id="batchGrid">
+              <!-- 左侧指南卡片：随下载方式切换 -->
+              <section class="batch-card batch-card-template">
+                <!-- Excel 模式指南 -->
+                <div class="batch-guide-content" id="batchGuideExcel">
+                  <div class="batch-card-head">
+                    <div class="batch-card-icon batch-icon-template" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>
+                    </div>
+                    <div>
+                      <h3 class="batch-card-title">Excel 输入模板</h3>
+                      <p class="batch-card-desc">三列即可，备注列留空由系统自动填写</p>
+                    </div>
+                  </div>
+                  <div class="batch-template-preview" aria-hidden="true">
+                    <div class="preview-sheet">
+                      <div class="preview-row preview-head"><span>标准号</span><span>标准名</span><span>备注</span></div>
+                      <div class="preview-row"><span>GB/T 1002-2024</span><span>插座</span><span class="preview-auto">自动</span></div>
+                      <div class="preview-row"><span>GB 4785-2019</span><span>汽车灯</span><span class="preview-auto">自动</span></div>
+                    </div>
+                  </div>
+                  <ul class="batch-card-list">
+                    <li><strong>标准号</strong> — 必填，用于库内检索与 E 盘匹配</li>
+                    <li><strong>标准名</strong> — 选填，便于核对</li>
+                    <li><strong>备注</strong> — 未找到 PDF 时自动填「否」</li>
+                  </ul>
+                  <button type="button" class="btn-template" id="btnBatchTemplate">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0l4-4m-4 4l-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                    下载 Excel 模板
+                  </button>
+                </div>
+
+                <!-- 文本模式指南 -->
+                <div class="batch-guide-content" id="batchGuideText" hidden>
+                  <div class="batch-card-head">
+                    <div class="batch-card-icon batch-icon-template" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                    </div>
+                    <div>
+                      <h3 class="batch-card-title">文本粘贴说明</h3>
+                      <p class="batch-card-desc">无需自建 Excel 表，直接复制标准清单粘贴</p>
+                    </div>
+                  </div>
+                  <div class="batch-text-format-box">
+                    <div class="format-tag">支持的常见输入格式</div>
+                    <pre class="format-code"><code>GB/T 19001-2016 质量管理体系
+GB 50016-2014 建筑设计防火规范
+GB/T 1002-2024
+DL/T 5161.1-2018 电气装置安装</code></pre>
+                  </div>
+                  <ul class="batch-card-list">
+                    <li><strong>每行一条</strong> — 标准号与名称可用空格或制表符隔开</li>
+                    <li><strong>多源复制</strong> — 支持直接从网页、Word、微信或 Excel 复制列</li>
+                    <li><strong>自动清洗</strong> — 自动去除行首序号（如 1.、1、）并过滤空行</li>
+                  </ul>
+                  <div class="batch-text-tools">
+                    <button type="button" class="btn-template" id="btnFillTextExample">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                      填入测试示例
+                    </button>
+                    <button type="button" class="btn-batch btn-batch-ghost" id="btnClearTextInput" title="清空文本框">
+                      清空文本
+                    </button>
+                  </div>
+                </div>
               </section>
 
+              <!-- 右侧输入卡片：同一位置大输入框切换 -->
               <section class="batch-card batch-card-upload">
                 <div class="batch-card-head">
-                  <div class="batch-card-icon batch-icon-upload" aria-hidden="true">
+                  <div class="batch-card-icon batch-icon-upload" id="batchCardIcon" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                   </div>
-                  <div>
-                    <h3 class="batch-card-title">上传已填写的表格</h3>
+                  <div class="batch-card-title-group">
+                    <h3 class="batch-card-title" id="batchCardTitle">上传已填写的表格</h3>
                     <p class="batch-card-desc" id="batchCardDesc">支持 .xlsx、.xlsm、.csv，可自定义解析上限</p>
                   </div>
+                  <div class="batch-card-head-actions">
+                    <div class="batch-sub-mode-toggle" role="group" aria-label="下载输入方式切换">
+                      <button type="button" class="btn-sub-tab is-active" id="tabCardExcel" data-mode="excel" title="切换到 Excel 上传">表格上传</button>
+                      <button type="button" class="btn-sub-tab" id="tabCardText" data-mode="text" title="切换到文本粘贴">粘贴文本</button>
+                    </div>
+                  </div>
                 </div>
+
+                <!-- 模式 A：Excel 拖拽上传框 -->
                 <label class="batch-dropzone" id="batchDropzone">
                   <input type="file" id="batchFile" accept=".xlsx,.xlsm,.csv" hidden />
                   <span class="batch-dropzone-ring">
@@ -302,6 +369,17 @@
                   <span class="batch-dropzone-hint">Excel / CSV</span>
                   <span class="batch-dropzone-name" id="batchFileName">未选择文件</span>
                 </label>
+
+                <!-- 模式 B：文本粘贴大输入框（与上传框同一位置、同一尺寸的大输入框） -->
+                <div class="batch-textarea-wrap" id="batchTextWrap" hidden>
+                  <textarea
+                    id="batchTextInput"
+                    class="batch-textarea"
+                    placeholder="请在此粘贴或输入标准文本，每行一条标准号，例如：&#10;GB/T 19001-2016 质量管理体系&#10;GB 50016-2014 建筑设计防火规范&#10;GB/T 1002-2024&#10;支持从 Excel 表格复制整列或整行直接粘贴..."
+                    spellcheck="false"
+                  ></textarea>
+                </div>
+
                 <div class="batch-limit-bar" id="batchLimitBar">
                   <div class="batch-limit-label">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" width="15" height="15"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
@@ -320,6 +398,7 @@
                     </div>
                   </div>
                 </div>
+
                 <div class="batch-actions">
                   <button type="button" class="btn-batch btn-batch-primary" id="btnBatchParse">解析文件</button>
                   <button type="button" class="btn-batch btn-batch-secondary" id="btnBatchPreview" disabled>预览匹配</button>

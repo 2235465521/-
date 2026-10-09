@@ -17,21 +17,41 @@ _DISK_PDF_CACHE_LOCK = threading.Lock()
 _DISK_PDF_CACHE_TIME = 0.0
 _DISK_PDF_CACHE: list[Path] = []
 _DISK_PDF_PATHS_SET: set[str] = set()
+_DISK_PDF_NAME_MAP: dict[str, list[Path]] = {}  # 小写文件名 -> Path 候选列表 (O(1) 查找)
 _DISK_PDF_SCANNING = False  # Track if a background scan is running
 CACHE_TTL = 1800.0  # Cache for 30 minutes to avoid frequent disk array traversal
 
 
+def _get_effective_scan_roots() -> list[Path]:
+    """去重扫描根目录，避免因父子目录包含导致重复扫描 SMB 磁盘"""
+    raw_roots = [r for r in (PDF_SEARCH_ROOT, PDF_ROOT) if r.is_dir()]
+    effective: list[Path] = []
+    for r in raw_roots:
+        resolved = r.resolve()
+        # 若已有更宽泛的父级目录包含此路径，则无需重复遍历子目录
+        is_sub = False
+        for parent in effective:
+            try:
+                resolved.relative_to(parent.resolve())
+                is_sub = True
+                break
+            except ValueError:
+                pass
+        if not is_sub:
+            effective.append(r)
+    return effective
+
+
 def _bg_scan() -> None:
     """Background thread worker to perform the actual rglob scanning without blocking requests."""
-    global _DISK_PDF_CACHE, _DISK_PDF_CACHE_TIME, _DISK_PDF_SCANNING, _DISK_PDF_PATHS_SET
+    global _DISK_PDF_CACHE, _DISK_PDF_CACHE_TIME, _DISK_PDF_SCANNING, _DISK_PDF_PATHS_SET, _DISK_PDF_NAME_MAP
     try:
         found_files: list[Path] = []
         seen_paths: set[str] = set()
+        name_map: dict[str, list[Path]] = {}
         last_update_time = time.time()
 
-        for root in (PDF_ROOT, PDF_SEARCH_ROOT):
-            if not root.is_dir():
-                continue
+        for root in _get_effective_scan_roots():
             try:
                 for hit in root.rglob("*.pdf"):
                     try:
@@ -41,6 +61,7 @@ def _bg_scan() -> None:
                         if key not in seen_paths:
                             seen_paths.add(key)
                             found_files.append(hit)
+                            name_map.setdefault(hit.name.lower(), []).append(hit)
                         
                         # Incrementally update the cache so the first request doesn't have to wait for the entire scan
                         now = time.time()
@@ -48,6 +69,7 @@ def _bg_scan() -> None:
                             with _DISK_PDF_CACHE_LOCK:
                                 _DISK_PDF_CACHE = list(found_files)
                                 _DISK_PDF_PATHS_SET = set(seen_paths)
+                                _DISK_PDF_NAME_MAP = {k: list(v) for k, v in name_map.items()}
                                 _DISK_PDF_CACHE_TIME = now
                             last_update_time = now
                     except Exception:
@@ -58,6 +80,7 @@ def _bg_scan() -> None:
         with _DISK_PDF_CACHE_LOCK:
             _DISK_PDF_CACHE = found_files
             _DISK_PDF_PATHS_SET = set(seen_paths)
+            _DISK_PDF_NAME_MAP = name_map
             _DISK_PDF_CACHE_TIME = time.time()
     finally:
         with _DISK_PDF_CACHE_LOCK:
@@ -65,17 +88,15 @@ def _bg_scan() -> None:
 
 
 def check_file_exists_in_cache(path: Path) -> bool:
-    """检查文件是否存在（优先检查直接路径，找不到再比对缓存路径集合）。"""
-    try:
-        if path.is_file():
-            return True
-    except Exception:
-        pass
+    """检查文件是否存在（优先检查内存缓存集合，避免网络 SMB 每次 stat RPC 往返开销）。"""
     key = str(path).lower()
     with _DISK_PDF_CACHE_LOCK:
         if key in _DISK_PDF_PATHS_SET:
             return True
-    return False
+    try:
+        return path.is_file()
+    except Exception:
+        return False
 
 
 import datetime
@@ -191,8 +212,12 @@ def discover_pdfs_on_disk(std_id: str, limit: int = 20) -> list[Path]:
 
 
 def find_pdf_by_filename_on_disk(name: str) -> Path | None:
-    """在磁盘 PDF 缓存列表中查找特定文件名的 PDF 文件"""
+    """在磁盘 PDF 缓存列表中查找特定文件名的 PDF 文件（哈希字典 O(1) 查找）"""
     name_lower = name.lower()
+    with _DISK_PDF_CACHE_LOCK:
+        candidates = _DISK_PDF_NAME_MAP.get(name_lower)
+        if candidates:
+            return candidates[0]
     for hit in _get_disk_pdf_list():
         if hit.name.lower() == name_lower:
             return hit

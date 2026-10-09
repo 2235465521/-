@@ -252,9 +252,9 @@ def _append_text_match(parts: list[str], args: list[Any], kw: str, *, param: str
     args.append(like_pat)
 
     if is_primary:
-        # 去除空格/标点的容错匹配
-        core = chinese_core_text(kw_strip)
-        if len(core) >= 2:
+        # 去除空格/标点的容错匹配：仅当搜索词包含空格或标点等需要容错时，才加入函数去标点匹配
+        core = re.sub(r"[^\w\u4e00-\u9fff]+", "", kw_strip)
+        if len(core) >= 2 and core != kw_strip:
             compact_expr = _compact_text_sql_expr("b.std_chinesename")
             parts.append(f"{compact_expr} LIKE {param}")
             args.append(f"%{core}%")
@@ -309,16 +309,16 @@ def build_keyword_match_clause(
     if remainder:
         # 分离纯文本中的空格和标点符号
         tokens = [t for t in re.split(r"[\s,，、;；:：+—\-/_／\(\)（）\.]+", remainder) if len(t) >= 2]
-        compact_expr = _compact_text_sql_expr("b.std_chinesename")
-        core = chinese_core_text(remainder)
+        core = re.sub(r"[^\w\u4e00-\u9fff]+", "", remainder)
 
         if len(tokens) > 1:
             # 多词输入：1) 索引友好的 AND 组合过滤
             and_parts = [f"b.std_chinesename LIKE {param}" for _ in tokens]
             and_clause = "(" + " AND ".join(and_parts) + ")"
             
-            # 2) 全文去空格/标点的容错精确匹配作为 OR 的一部分
-            if len(core) >= 2:
+            # 2) 仅当包含特殊标点且有核心词时，才加入紧凑去标点匹配
+            if len(core) >= 2 and core != remainder:
+                compact_expr = _compact_text_sql_expr("b.std_chinesename")
                 parts.append(f"({and_clause} OR {compact_expr} LIKE {param})")
                 args.extend(f"%{t}%" for t in tokens)
                 args.append(f"%{core}%")
@@ -335,8 +335,9 @@ def build_keyword_match_clause(
                     sub_parts.append(f"b.std_chinesename LIKE {param}")
                     args.append(f"%{kw_strip}%")
             
-            # 同样加入去除空格标点的大容错匹配条件
-            if len(core) >= 2:
+            # 仅当输入包含空格/标点时才增加 compact_expr 容错
+            if len(core) >= 2 and core != remainder:
+                compact_expr = _compact_text_sql_expr("b.std_chinesename")
                 sub_parts.append(f"{compact_expr} LIKE {param}")
                 args.append(f"%{core}%")
                 
@@ -362,42 +363,45 @@ def keyword_match_order_by(q: str, *, param: str = "?") -> tuple[str, list[Any]]
     if not primary:
         return "b.std_id", []
 
-    core = chinese_core_text(q)
-    norm_key = std_id_norm_key(primary)
-    compact_key = std_id_compact_key(primary)
-    std_compact = _compact_sql_expr("b.std_id")
-    like_pat = like_pattern(primary)
-    flex_pat = flex_std_id_like_pattern(primary) if looks_like_std_id(primary) else like_pat
-    text_like = f"%{primary}%"
-    core_like = f"%{core}%" if core else text_like
-    compact_expr = _compact_text_sql_expr("b.std_chinesename")
+    is_std = looks_like_std_id(primary)
+    if is_std:
+        norm_key = std_id_norm_key(primary)
+        compact_key = std_id_compact_key(primary)
+        std_compact = _compact_sql_expr("b.std_id")
+        like_pat = like_pattern(primary)
+        flex_pat = flex_std_id_like_pattern(primary)
 
-    order = (
-        f"CASE "
-        f"WHEN b.std_id_norm = {param} THEN 0 "
-        f"WHEN b.std_id_norm LIKE {param} THEN 1 "
-        f"WHEN {std_compact} = {param} THEN 2 "
-        f"WHEN {std_compact} LIKE {param} THEN 3 "
-        f"WHEN REPLACE(UPPER(b.std_id), ' ', '') = {param} THEN 4 "
-        f"WHEN UPPER(b.std_id) = {param} THEN 5 "
-        f"WHEN UPPER(b.std_id) LIKE {param} THEN 6 "
-        f"WHEN UPPER(b.std_id) LIKE {param} THEN 7 "
-        f"WHEN b.std_chinesename LIKE {param} THEN 8 "
-        f"WHEN {compact_expr} LIKE {param} THEN 9 "
-        f"ELSE 10 END, b.std_id"
-    )
-    return order, [
-        norm_key,
-        f"{norm_key}%",
-        compact_key,
-        f"{compact_key}%",
-        norm_key,
-        primary.upper(),
-        like_pat,
-        flex_pat,
-        text_like,
-        core_like,
-    ]
+        order = (
+            f"CASE "
+            f"WHEN b.std_id_norm = {param} THEN 0 "
+            f"WHEN b.std_id_norm LIKE {param} THEN 1 "
+            f"WHEN {std_compact} = {param} THEN 2 "
+            f"WHEN {std_compact} LIKE {param} THEN 3 "
+            f"WHEN REPLACE(UPPER(b.std_id), ' ', '') = {param} THEN 4 "
+            f"WHEN UPPER(b.std_id) = {param} THEN 5 "
+            f"WHEN UPPER(b.std_id) LIKE {param} THEN 6 "
+            f"WHEN UPPER(b.std_id) LIKE {param} THEN 7 "
+            f"ELSE 8 END, b.release_date DESC, b.std_id"
+        )
+        return order, [
+            norm_key,
+            f"{norm_key}%",
+            compact_key,
+            f"{compact_key}%",
+            norm_key,
+            primary.upper(),
+            like_pat,
+            flex_pat,
+        ]
+    else:
+        clean_text = collapse_whitespace(primary)
+        order = (
+            f"CASE "
+            f"WHEN b.std_chinesename = {param} THEN 0 "
+            f"WHEN b.std_chinesename LIKE {param} THEN 1 "
+            f"ELSE 2 END, b.release_date DESC, b.std_id"
+        )
+        return order, [clean_text, f"{clean_text}%"]
 
 
 def mysql_keyword_match_order_by(q: str) -> tuple[str, list[Any]]:
@@ -406,37 +410,40 @@ def mysql_keyword_match_order_by(q: str) -> tuple[str, list[Any]]:
     if not primary:
         return "b.std_id", []
 
-    core = chinese_core_text(q)
-    norm_key = std_id_norm_key(primary)
-    compact_key = std_id_compact_key(primary)
-    std_compact = _compact_sql_expr("b.std_id")
-    like_pat = like_pattern(primary)
-    flex_pat = flex_std_id_like_pattern(primary) if looks_like_std_id(primary) else like_pat
-    text_like = f"%{primary}%"
-    core_like = f"%{core}%" if core else text_like
-    compact_expr = _compact_text_sql_expr("b.std_chinesename")
+    is_std = looks_like_std_id(primary)
+    if is_std:
+        norm_key = std_id_norm_key(primary)
+        compact_key = std_id_compact_key(primary)
+        std_compact = _compact_sql_expr("b.std_id")
+        like_pat = like_pattern(primary)
+        flex_pat = flex_std_id_like_pattern(primary)
 
-    order = (
-        f"CASE "
-        f"WHEN REPLACE(UPPER(b.std_id), ' ', '') = %s THEN 0 "
-        f"WHEN REPLACE(UPPER(b.std_id), ' ', '') LIKE %s THEN 1 "
-        f"WHEN {std_compact} = %s THEN 2 "
-        f"WHEN {std_compact} LIKE %s THEN 3 "
-        f"WHEN UPPER(b.std_id) = %s THEN 4 "
-        f"WHEN UPPER(b.std_id) LIKE %s THEN 5 "
-        f"WHEN UPPER(b.std_id) LIKE %s THEN 6 "
-        f"WHEN b.std_chinesename LIKE %s THEN 7 "
-        f"WHEN {compact_expr} LIKE %s THEN 8 "
-        f"ELSE 9 END, b.std_id"
-    )
-    return order, [
-        norm_key,
-        f"{norm_key}%",
-        compact_key,
-        f"{compact_key}%",
-        primary.upper(),
-        like_pat,
-        flex_pat,
-        text_like,
-        core_like,
-    ]
+        order = (
+            f"CASE "
+            f"WHEN REPLACE(UPPER(b.std_id), ' ', '') = %s THEN 0 "
+            f"WHEN REPLACE(UPPER(b.std_id), ' ', '') LIKE %s THEN 1 "
+            f"WHEN {std_compact} = %s THEN 2 "
+            f"WHEN {std_compact} LIKE %s THEN 3 "
+            f"WHEN UPPER(b.std_id) = %s THEN 4 "
+            f"WHEN UPPER(b.std_id) LIKE %s THEN 5 "
+            f"WHEN UPPER(b.std_id) LIKE %s THEN 6 "
+            f"ELSE 7 END, b.release_date DESC, b.std_id"
+        )
+        return order, [
+            norm_key,
+            f"{norm_key}%",
+            compact_key,
+            f"{compact_key}%",
+            primary.upper(),
+            like_pat,
+            flex_pat,
+        ]
+    else:
+        clean_text = collapse_whitespace(primary)
+        order = (
+            f"CASE "
+            f"WHEN b.std_chinesename = %s THEN 0 "
+            f"WHEN b.std_chinesename LIKE %s THEN 1 "
+            f"ELSE 2 END, b.release_date DESC, b.std_id"
+        )
+        return order, [clean_text, f"{clean_text}%"]

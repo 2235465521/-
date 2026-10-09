@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import mimetypes
 import sys
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +24,7 @@ from core.batch_download import (  # noqa: E402
     build_zip_from_base_ids,
     build_zip_from_geo,
     compose_download_filename,
+    parse_text,
     parse_upload,
     preview_items,
 )
@@ -379,6 +382,11 @@ def api_download_bulk():
     )
 
 
+_BATCH_CHECK_CACHE: dict[tuple[int, bool], tuple[bool, float]] = {}
+_BATCH_CHECK_LOCK = threading.Lock()
+_BATCH_CHECK_TTL = 120.0
+
+
 @app.route("/api/std/batch_check")
 def api_std_batch_check():
     try:
@@ -387,14 +395,31 @@ def api_std_batch_check():
         if not ids_str:
             return jsonify({"ok": True, "results": {}})
         ids = [int(x) for x in ids_str.split(",") if x.strip().isdigit()]
+        now = time.time()
         results = {}
-        for bid in ids:
+        missing_ids = []
+
+        with _BATCH_CHECK_LOCK:
+            for bid in ids:
+                cached = _BATCH_CHECK_CACHE.get((bid, scan_disk))
+                if cached and now - cached[1] < _BATCH_CHECK_TTL:
+                    results[bid] = cached[0]
+                else:
+                    missing_ids.append(bid)
+
+        for bid in missing_ids:
             std = db.get_by_id(bid)
             if not std:
-                results[bid] = False
-                continue
-            files = collect_files_for_standard(std, scan_disk=scan_disk)
-            results[bid] = any(f.get("exists") for f in files)
+                has_pdf = False
+            else:
+                files = collect_files_for_standard(std, scan_disk=scan_disk)
+                has_pdf = any(f.get("exists") for f in files)
+            results[bid] = has_pdf
+            with _BATCH_CHECK_LOCK:
+                if len(_BATCH_CHECK_CACHE) > 5000:
+                    _BATCH_CHECK_CACHE.clear()
+                _BATCH_CHECK_CACHE[(bid, scan_disk)] = (has_pdf, now)
+
         return jsonify({"ok": True, "results": results})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -582,6 +607,26 @@ def api_batch_parse():
     return jsonify(result), status
 
 
+@app.route("/api/batch/parse_text", methods=["POST"])
+def api_batch_parse_text():
+    body = request.get_json(silent=True) or {}
+    text = body.get("text") or request.form.get("text") or ""
+    if not text.strip():
+        return jsonify({"ok": False, "error": "请先输入或粘贴标准文本"}), 400
+
+    max_rows_raw = body.get("max_rows") or request.form.get("max_rows")
+    max_rows = None
+    if max_rows_raw is not None:
+        try:
+            max_rows = int(max_rows_raw)
+        except (ValueError, TypeError):
+            pass
+
+    result = parse_text(text, max_rows=max_rows)
+    status = 200 if result.get("ok") else 400
+    return jsonify(result), status
+
+
 @app.route("/api/batch/preview", methods=["POST"])
 def api_batch_preview():
     body = request.get_json(silent=True) or {}
@@ -639,6 +684,14 @@ def api_batch_download():
         items = body.get("items") or []
         scan_disk = body.get("scan_disk", scan_disk)
         only_pdf = body.get("only_pdf", only_pdf)
+        form_items = request.form.get("items")
+        if not items and form_items:
+            try:
+                items = json.loads(form_items)
+            except Exception:
+                pass
+        if request.form.get("only_pdf"):
+            only_pdf = request.form.get("only_pdf") != "0"
 
     if not items:
         return jsonify({"ok": False, "error": "无待下载条目"}), 400

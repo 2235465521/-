@@ -1,0 +1,200 @@
+{
+  "python": "3.14.4",
+  "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.35",
+  "file_count": 12,
+  "input_bytes": 57340492,
+  "repeats": 3,
+  "notes": [
+    "Sources are read before each timed run; results use warm OS/SMB caches.",
+    "Disk output uses the system temporary directory and does not fsync.",
+    "ZIP CRC verification occurs after timing; this does not measure HTTP throughput."
+  ],
+  "cases": [
+    {
+      "sink": "memory",
+      "mode": "stored",
+      "median_seconds": 0.09698440501233563,
+      "median_cpu_seconds": 0.09697390899999998,
+      "zip_bytes": 57343158,
+      "saving_percent": -0.004649419471314253,
+      "runs": [
+        {
+          "seconds": 0.18337180494563654,
+          "cpu_seconds": 0.105027441,
+          "zip_bytes": 57343158,
+          "peak_rss_mib": 70.0,
+          "crc_ok": true
+        },
+        {
+          "seconds": 0.09456731902901083,
+          "cpu_seconds": 0.094558117,
+          "zip_bytes": 57343158,
+          "peak_rss_mib": 70.0,
+          "crc_ok": true
+        },
+        {
+          "seconds": 0.09698440501233563,
+          "cpu_seconds": 0.09697390899999998,
+          "zip_bytes": 57343158,
+          "peak_rss_mib": 69.9921875,
+          "crc_ok": true
+        }
+      ]
+    },
+    {
+      "sink": "memory",
+      "mode": "deflate1",
+      "median_seconds": 1.3527278319816105,
+      "median_cpu_seconds": 1.278438618,
+      "zip_bytes": 42857113,
+      "saving_percent": 25.258553763368475,
+      "runs": [
+        {
+          "seconds": 1.341579362982884,
+          "cpu_seconds": 1.278438618,
+          "zip_bytes": 42857113,
+          "peak_rss_mib": 55.76953125,
+          "crc_ok": true
+        },
+        {
+          "seconds": 1.3527278319816105,
+          "cpu_seconds": 1.291702137,
+          "zip_bytes": 42857113,
+          "peak_rss_mib": 56.0,
+          "crc_ok": true
+        },
+        {
+          "seconds": 1.357191582035739,
+          "cpu_seconds": 1.254963997,
+          "zip_bytes": 42857113,
+          "peak_rss_mib": 55.7578125,
+          "crc_ok": true
+        }
+      ]
+    },
+    {
+      "sink": "memory",
+      "mode": "deflate6",
+      "median_seconds": 2.0278272639843635,
+      "median_cpu_seconds": 1.9904295440000002,
+      "zip_bytes": 42020024,
+      "saving_percent": 26.718410438473395,
+      "runs": [
+        {
+          "seconds": 1.9953661980107427,
+          "cpu_seconds": 1.958253429,
+          "zip_bytes": 42020024,
+          "peak_rss_mib": 55.75390625,
+          "crc_ok": true
+        },
+        {
+          "seconds": 2.0278272639843635,
+          "cpu_seconds": 1.9904295440000002,
+          "zip_bytes": 42020024,
+          "peak_rss_mib": 55.75390625,
+          "crc_ok": true
+        },
+        {
+          "seconds": 2.076425619015936,
+          "cpu_seconds": 2.0226235519999998,
+          "zip_bytes": 42020024,
+          "peak_rss_mib": 54.0,
+          "crc_ok": true
+        }
+      ]
+    },
+    {
+      "sink": "disk",
+      "mode": "stored",
+      "median_seconds": 0.09308058500755578,
+      "median_cpu_seconds": 0.09208884699999999,
+      "zip_bytes": 57343158,
+      "saving_percent": -0.004649419471314253,
+      "runs": [
+        {
+          "seconds": 0.10467414202867076,
+          "cpu_seconds": 0.10466817199999999,
+          "zip_bytes": 57343158,
+          "peak_rss_mib": 18.0,
+          "crc_ok": true
+        },
+        {
+          "seconds": 0.09308058500755578,
+          "cpu_seconds": 0.09208884699999999,
+          "zip_bytes": 57343158,
+          "peak_rss_mib": 16.0,
+          "crc_ok": true
+        },
+        {
+          "seconds": 0.09098524803994223,
+          "cpu_seconds": 0.09098272599999999,
+          "zip_bytes": 57343158,
+          "peak_rss_mib": 18.0,
+          "crc_ok": true
+        }
+      ]
+    },
+    {
+      "sink": "disk",
+      "mode": "deflate1",
+      "median_seconds": 1.3371872080024332,
+      "median_cpu_seconds": 1.25913171,
+      "zip_bytes": 42857113,
+      "saving_percent": 25.258553763368475,
+      "runs": [
+        {
+          "seconds": 1.3371872080024332,
+          "cpu_seconds": 1.2793042410000002,
+          "zip_bytes": 42857113,
+          "peak_rss_mib": 16.0,
+          "crc_ok": true
+        },
+        {
+          "seconds": 1.3002225310192443,
+          "cpu_seconds": 1.241865003,
+          "zip_bytes": 42857113,
+          "peak_rss_mib": 18.0,
+          "crc_ok": true
+        },
+        {
+          "seconds": 1.3802303610136732,
+          "cpu_seconds": 1.25913171,
+          "zip_bytes": 42857113,
+          "peak_rss_mib": 16.0,
+          "crc_ok": true
+        }
+      ]
+    },
+    {
+      "sink": "disk",
+      "mode": "deflate6",
+      "median_seconds": 2.0031367990304716,
+      "median_cpu_seconds": 1.9639090310000002,
+      "zip_bytes": 42020024,
+      "saving_percent": 26.718410438473395,
+      "runs": [
+        {
+          "seconds": 2.0031367990304716,
+          "cpu_seconds": 1.9639090310000002,
+          "zip_bytes": 42020024,
+          "peak_rss_mib": 16.0,
+          "crc_ok": true
+        },
+        {
+          "seconds": 1.9555678819888271,
+          "cpu_seconds": 1.918849819,
+          "zip_bytes": 42020024,
+          "peak_rss_mib": 16.0,
+          "crc_ok": true
+        },
+        {
+          "seconds": 2.053570371994283,
+          "cpu_seconds": 1.9738821579999999,
+          "zip_bytes": 42020024,
+          "peak_rss_mib": 18.0,
+          "crc_ok": true
+        }
+      ]
+    }
+  ]
+}

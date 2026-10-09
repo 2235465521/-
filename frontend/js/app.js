@@ -41,8 +41,8 @@
       subtitle: "按协会名、标准名称检索团标 PDF 文件。",
     },
     batch: {
-      title: "Excel 批量下载",
-      subtitle: "上传标准清单，自动匹配并打包 ZIP 下载。",
+      title: "标准 PDF 批量下载",
+      subtitle: "支持 Excel 表格导入或直接粘贴文本清单，自动匹配并打包 ZIP 下载。",
     },
   };
 
@@ -725,10 +725,10 @@
       }
     });
 
-    // Batch check PDFs on disk in the background (extremely responsive)
-    if (!isCatalogMode(currentMode) && items.length > 0) {
+    // Batch check PDFs on disk in the background (only when scanDisk is enabled, as backend already returns has_pdf)
+    if (!isCatalogMode(currentMode) && items.length > 0 && scanDiskEnabled()) {
       const ids = items.map(it => it.id).join(",");
-      const scan = scanDiskEnabled() ? "1" : "0";
+      const scan = "1";
       fetch(`/api/std/batch_check?ids=${ids}&scan_disk=${scan}`)
         .then(res => res.json())
         .then(resData => {

@@ -1576,10 +1576,20 @@
       font-size: clamp(0.72rem, 1.5vmin, 0.84rem);
       margin: 0;
     }
-    .main-area.mode-batch .batch-dropzone {
+    .main-area.mode-batch .batch-dropzone,
+    .main-area.mode-batch .batch-textarea-wrap {
       flex: 1;
       min-height: 3.5rem;
+      padding: 0;
+    }
+    .main-area.mode-batch .batch-dropzone {
       padding: 0.55rem;
+    }
+    .main-area.mode-batch .batch-guide-content {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
     }
     .main-area.mode-batch .batch-card-upload {
       display: flex;
@@ -1608,7 +1618,8 @@
       min-height: 0;
       max-height: none;
     }
-    .main-area.mode-batch > .batch-stage.has-table .batch-grid {
+    .main-area.mode-batch > .batch-stage.has-table .batch-grid,
+    .main-area.mode-batch > .batch-stage.has-table .batch-mode-switch-wrap {
       display: none;
     }
     .main-area.mode-batch > .batch-stage.has-table .batch-panel-head,
@@ -2069,6 +2080,172 @@
       margin: 0;
       font-size: 0.78rem;
       color: var(--muted);
+    }
+    /* 批量模式切换 Tabs */
+    .batch-mode-switch-wrap {
+      display: flex;
+      align-items: center;
+      margin-bottom: 0.85rem;
+    }
+    .batch-mode-tabs {
+      display: inline-flex;
+      background: var(--bg2);
+      padding: 4px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      gap: 4px;
+    }
+    .btn-batch-tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.45rem 1.1rem;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      user-select: none;
+    }
+    .btn-batch-tab:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.6);
+    }
+    .btn-batch-tab.is-active {
+      background: #ffffff;
+      color: var(--accent);
+      font-weight: 600;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    }
+    .tab-badge-pill {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.12rem 0.5rem;
+      border-radius: 20px;
+      background: var(--accent-pill);
+      color: var(--accent-pill-text);
+      line-height: 1.2;
+    }
+
+    /* 模式切换与子切换按钮 */
+    .batch-card-title-group {
+      flex: 1;
+      min-width: 0;
+    }
+    .batch-card-head-actions {
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .batch-sub-mode-toggle {
+      display: inline-flex;
+      align-items: center;
+      background: #f1f5f9;
+      padding: 2px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      gap: 2px;
+    }
+    .btn-sub-tab {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 0.25rem 0.65rem;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .btn-sub-tab:hover {
+      color: var(--text);
+    }
+    .btn-sub-tab.is-active {
+      background: #ffffff;
+      color: var(--accent2);
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    }
+
+    /* 指南卡片与大输入框切换 */
+    .batch-guide-content {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      gap: 0.35rem;
+    }
+    .batch-guide-content[hidden],
+    .batch-dropzone[hidden],
+    .batch-textarea-wrap[hidden] {
+      display: none !important;
+    }
+
+    /* 文本模式专用输入框样式（保持与 dropzone 相同尺寸与格调） */
+    .batch-textarea-wrap {
+      flex: 1;
+      min-height: 8.5rem;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    .batch-textarea {
+      width: 100%;
+      height: 100%;
+      flex: 1;
+      min-height: 8.5rem;
+      padding: 0.85rem 1rem;
+      border: 2px solid #cbd5e1;
+      border-radius: 14px;
+      background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 0.84rem;
+      line-height: 1.55;
+      resize: none;
+      box-sizing: border-box;
+      transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+      outline: none;
+    }
+    .batch-textarea:focus {
+      border-color: var(--accent);
+      background: #ffffff;
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    .batch-text-format-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.6rem 0.75rem;
+    }
+    .format-tag {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    .format-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.76rem;
+      color: #334155;
+      background: transparent;
+      line-height: 1.5;
+      margin: 0;
+      white-space: pre-wrap;
+    }
+    .batch-text-tools {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.35rem;
+      flex-wrap: wrap;
+    }
+    #batchTextCountBadge {
+      font-weight: 700;
+      color: var(--accent);
     }
     .batch-table-section {
       margin-top: 0.65rem;

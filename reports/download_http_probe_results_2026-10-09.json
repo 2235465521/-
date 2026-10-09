@@ -1,0 +1,61 @@
+{
+  "health": [
+    {
+      "port": 8005,
+      "status": 200,
+      "seconds": 0.016849266015924513,
+      "db_ready": true,
+      "db_backend": "MySQL"
+    },
+    {
+      "port": 8090,
+      "status": 200,
+      "seconds": 0.007883487967774272,
+      "db_ready": true,
+      "db_backend": "MySQL"
+    }
+  ],
+  "downloads": [
+    {
+      "port": 8005,
+      "repeat": 0,
+      "status": 206,
+      "headers_seconds": 0.06501052901148796,
+      "seconds": 0.14621254004305229,
+      "bytes": 8388608,
+      "content_range": "bytes 0-8388607/38832343",
+      "mib_per_second": 54.714869173631755
+    },
+    {
+      "port": 8090,
+      "repeat": 0,
+      "status": 206,
+      "headers_seconds": 0.0281764889950864,
+      "seconds": 0.040639500017277896,
+      "bytes": 8388608,
+      "content_range": "bytes 0-8388607/38832343",
+      "mib_per_second": 196.85281552673624
+    },
+    {
+      "port": 8005,
+      "repeat": 1,
+      "status": 206,
+      "headers_seconds": 0.02356363699072972,
+      "seconds": 0.036194526008330286,
+      "bytes": 8388608,
+      "content_range": "bytes 0-8388607/38832343",
+      "mib_per_second": 221.02789792464128
+    },
+    {
+      "port": 8090,
+      "repeat": 1,
+      "status": 206,
+      "headers_seconds": 0.0240565610001795,
+      "seconds": 0.03981772798579186,
+      "bytes": 8388608,
+      "content_range": "bytes 0-8388607/38832343",
+      "mib_per_second": 200.9155319674351
+    }
+  ],
+  "note": "Loopback timings do not measure client LAN bandwidth."
+}

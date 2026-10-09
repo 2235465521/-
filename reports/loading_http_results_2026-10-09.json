@@ -1,0 +1,316 @@
+[
+  {
+    "case": "home",
+    "repeat": 0,
+    "params": {
+      "browse": 1,
+      "page": 1,
+      "per_page": 10,
+      "enrich": 0,
+      "scan_disk": 1,
+      "verify_disk": 1
+    },
+    "status": 200,
+    "seconds": 0.010016408981755376,
+    "ok": true,
+    "total": 173867,
+    "mode": "browse",
+    "bytes": 3480,
+    "ids": [
+      1034298,
+      1034299,
+      1034300,
+      1034301,
+      1034302,
+      1034303,
+      1034304,
+      1034306,
+      1034307,
+      1034308
+    ]
+  },
+  {
+    "case": "home",
+    "repeat": 1,
+    "params": {
+      "browse": 1,
+      "page": 1,
+      "per_page": 10,
+      "enrich": 0,
+      "scan_disk": 1,
+      "verify_disk": 1
+    },
+    "status": 200,
+    "seconds": 0.001508184999693185,
+    "ok": true,
+    "total": 173867,
+    "mode": "browse",
+    "bytes": 3480,
+    "ids": [
+      1034298,
+      1034299,
+      1034300,
+      1034301,
+      1034302,
+      1034303,
+      1034304,
+      1034306,
+      1034307,
+      1034308
+    ]
+  },
+  {
+    "case": "standard_cosmetics",
+    "repeat": 0,
+    "params": {
+      "q": "化妆品",
+      "page": 1,
+      "per_page": 10,
+      "enrich": 0,
+      "scan_disk": 1,
+      "verify_disk": 1
+    },
+    "status": 200,
+    "seconds": 22.408621237031184,
+    "ok": true,
+    "total": 412,
+    "mode": "text",
+    "bytes": 3894,
+    "ids": [
+      80063,
+      80064,
+      627171,
+      176728,
+      176729,
+      186052,
+      186181,
+      186312,
+      186313,
+      186544
+    ]
+  },
+  {
+    "case": "standard_cosmetics",
+    "repeat": 1,
+    "params": {
+      "q": "化妆品",
+      "page": 1,
+      "per_page": 10,
+      "enrich": 0,
+      "scan_disk": 1,
+      "verify_disk": 1
+    },
+    "status": 200,
+    "seconds": 0.001789608970284462,
+    "ok": true,
+    "total": 412,
+    "mode": "text",
+    "bytes": 3514,
+    "ids": [
+      80063,
+      80064,
+      627171,
+      176728,
+      176729,
+      186052,
+      186181,
+      186312,
+      186313,
+      186544
+    ]
+  },
+  {
+    "case": "product_cosmetics",
+    "repeat": 0,
+    "params": {
+      "q": "化妆品",
+      "source": "product",
+      "page": 1,
+      "per_page": 10,
+      "enrich": 0,
+      "scan_disk": 1,
+      "verify_disk": 1
+    },
+    "status": 200,
+    "seconds": 8.687780251028016,
+    "ok": true,
+    "total": 483,
+    "mode": "product_cluster",
+    "bytes": 4670,
+    "ids": [
+      11990,
+      43724,
+      44992,
+      50716,
+      50821,
+      103499,
+      144901,
+      145602,
+      302948,
+      80063
+    ]
+  },
+  {
+    "case": "product_cosmetics",
+    "repeat": 1,
+    "params": {
+      "q": "化妆品",
+      "source": "product",
+      "page": 1,
+      "per_page": 10,
+      "enrich": 0,
+      "scan_disk": 1,
+      "verify_disk": 1
+    },
+    "status": 200,
+    "seconds": 7.9272868990083225,
+    "ok": true,
+    "total": 483,
+    "mode": "product_cluster",
+    "bytes": 4670,
+    "ids": [
+      11990,
+      43724,
+      44992,
+      50716,
+      50821,
+      103499,
+      144901,
+      145602,
+      302948,
+      80063
+    ]
+  },
+  {
+    "case": "filter_options",
+    "repeat": 0,
+    "params": {},
+    "status": 200,
+    "seconds": 0.05619991198182106,
+    "ok": true,
+    "total": null,
+    "mode": null,
+    "bytes": 16999,
+    "ids": []
+  },
+  {
+    "case": "filter_options",
+    "repeat": 1,
+    "params": {},
+    "status": 200,
+    "seconds": 0.012133654963690788,
+    "ok": true,
+    "total": null,
+    "mode": null,
+    "bytes": 16999,
+    "ids": []
+  },
+  {
+    "case": "company_suggest",
+    "repeat": 0,
+    "params": {
+      "company_q": "福建"
+    },
+    "status": 200,
+    "seconds": 0.3010252089588903,
+    "ok": true,
+    "total": null,
+    "mode": null,
+    "bytes": 1334,
+    "ids": []
+  },
+  {
+    "case": "company_suggest",
+    "repeat": 1,
+    "params": {
+      "company_q": "福建"
+    },
+    "status": 200,
+    "seconds": 0.13951102795545012,
+    "ok": true,
+    "total": null,
+    "mode": null,
+    "bytes": 1334,
+    "ids": []
+  },
+  {
+    "case": "catalog_home",
+    "repeat": 0,
+    "params": {
+      "source": "tuangbiao",
+      "browse": 1,
+      "page": 1,
+      "per_page": 10
+    },
+    "status": 200,
+    "seconds": 0.012206254992634058,
+    "ok": true,
+    "total": 58806,
+    "mode": "tuangbiao_file",
+    "bytes": 10092,
+    "ids": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ]
+  },
+  {
+    "case": "catalog_home",
+    "repeat": 1,
+    "params": {
+      "source": "tuangbiao",
+      "browse": 1,
+      "page": 1,
+      "per_page": 10
+    },
+    "status": 200,
+    "seconds": 0.007837306009605527,
+    "ok": true,
+    "total": 58806,
+    "mode": "tuangbiao_file",
+    "bytes": 10092,
+    "ids": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ]
+  },
+  {
+    "case": "catalog_status",
+    "repeat": 0,
+    "params": {},
+    "status": 200,
+    "seconds": 0.011167068965733051,
+    "ok": true,
+    "total": null,
+    "mode": null,
+    "bytes": 504,
+    "ids": []
+  },
+  {
+    "case": "catalog_status",
+    "repeat": 1,
+    "params": {},
+    "status": 200,
+    "seconds": 0.007154564023949206,
+    "ok": true,
+    "total": null,
+    "mode": null,
+    "bytes": 504,
+    "ids": []
+  }
+]

@@ -1,0 +1,274 @@
+{
+  "connect_seconds": 0.012667550996411592,
+  "stages": [
+    {
+      "stage": "home_count",
+      "seconds": 9.248047998000402,
+      "row_count": 1,
+      "count": 173867
+    },
+    {
+      "stage": "home_page",
+      "seconds": 9.72385915601626,
+      "row_count": 10,
+      "count": null
+    },
+    {
+      "stage": "standard_count",
+      "seconds": 10.964039475016762,
+      "row_count": 1,
+      "count": 412
+    },
+    {
+      "stage": "standard_page",
+      "seconds": 11.190767567954026,
+      "row_count": 10,
+      "count": null
+    },
+    {
+      "stage": "product_count",
+      "seconds": 3.7170450730482116,
+      "row_count": 1,
+      "count": 483
+    },
+    {
+      "stage": "product_page",
+      "seconds": 3.977622633043211,
+      "row_count": 10,
+      "count": null
+    }
+  ],
+  "indexes": {
+    "std_base": [
+      {
+        "Key_name": "PRIMARY",
+        "Column_name": "id",
+        "Cardinality": 515769
+      },
+      {
+        "Key_name": "uniq_std_id",
+        "Column_name": "std_id",
+        "Cardinality": 515769
+      },
+      {
+        "Key_name": "idx_std_type",
+        "Column_name": "std_type",
+        "Cardinality": 149
+      },
+      {
+        "Key_name": "idx_release_date",
+        "Column_name": "release_date",
+        "Cardinality": 13178
+      },
+      {
+        "Key_name": "idx_type_release",
+        "Column_name": "std_type_no",
+        "Cardinality": 6
+      },
+      {
+        "Key_name": "idx_type_release",
+        "Column_name": "release_date",
+        "Cardinality": 21234
+      },
+      {
+        "Key_name": "idx_type_state_date",
+        "Column_name": "std_type_no",
+        "Cardinality": 6
+      },
+      {
+        "Key_name": "idx_type_state_date",
+        "Column_name": "ex_state",
+        "Cardinality": 19
+      },
+      {
+        "Key_name": "idx_type_state_date",
+        "Column_name": "release_date",
+        "Cardinality": 39001
+      },
+      {
+        "Key_name": "idx_ex_state",
+        "Column_name": "ex_state",
+        "Cardinality": 3
+      },
+      {
+        "Key_name": "idx_std_id_norm",
+        "Column_name": "std_id_norm",
+        "Cardinality": 498092
+      },
+      {
+        "Key_name": "idx_std_base_release_date",
+        "Column_name": "release_date",
+        "Cardinality": 11514
+      },
+      {
+        "Key_name": "idx_std_chinesename",
+        "Column_name": "std_chinesename",
+        "Cardinality": 515769
+      }
+    ],
+    "std_filepath": [
+      {
+        "Key_name": "PRIMARY",
+        "Column_name": "id",
+        "Cardinality": 987291
+      },
+      {
+        "Key_name": "uk_file_hash",
+        "Column_name": "file_hash",
+        "Cardinality": 1
+      },
+      {
+        "Key_name": "idx_base_id",
+        "Column_name": "base_id",
+        "Cardinality": 101949
+      }
+    ]
+  },
+  "plans": {
+    "home_count": [
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "f",
+        "type": "ALL",
+        "possible_keys": "idx_base_id",
+        "key": null,
+        "rows": 987306,
+        "filtered": 100.0,
+        "Extra": "Using where; Start temporary"
+      },
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "b",
+        "type": "eq_ref",
+        "possible_keys": "PRIMARY,uniq_std_id,idx_std_type,idx_release_date,idx_type_release,idx_type_state_date,idx_ex_state,idx_std_id_norm,idx_std_base_release_date,idx_std_chinesename",
+        "key": "PRIMARY",
+        "rows": 1,
+        "filtered": 100.0,
+        "Extra": "Using where; End temporary"
+      }
+    ],
+    "home_page": [
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "f",
+        "type": "ALL",
+        "possible_keys": "idx_base_id",
+        "key": null,
+        "rows": 987306,
+        "filtered": 100.0,
+        "Extra": "Using where; Using temporary; Using filesort; Start temporary"
+      },
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "b",
+        "type": "eq_ref",
+        "possible_keys": "PRIMARY",
+        "key": "PRIMARY",
+        "rows": 1,
+        "filtered": 100.0,
+        "Extra": "Using where; End temporary"
+      }
+    ],
+    "standard_count": [
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "f",
+        "type": "ALL",
+        "possible_keys": "idx_base_id",
+        "key": null,
+        "rows": 987306,
+        "filtered": 100.0,
+        "Extra": "Using where; Start temporary"
+      },
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "b",
+        "type": "eq_ref",
+        "possible_keys": "PRIMARY,uniq_std_id,idx_std_type,idx_release_date,idx_type_release,idx_type_state_date,idx_ex_state,idx_std_id_norm,idx_std_base_release_date,idx_std_chinesename",
+        "key": "PRIMARY",
+        "rows": 1,
+        "filtered": 100.0,
+        "Extra": "Using where; End temporary"
+      }
+    ],
+    "standard_page": [
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "f",
+        "type": "ALL",
+        "possible_keys": "idx_base_id",
+        "key": null,
+        "rows": 987306,
+        "filtered": 100.0,
+        "Extra": "Using where; Using temporary; Using filesort; Start temporary"
+      },
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "b",
+        "type": "eq_ref",
+        "possible_keys": "PRIMARY",
+        "key": "PRIMARY",
+        "rows": 1,
+        "filtered": 100.0,
+        "Extra": "Using where; End temporary"
+      }
+    ],
+    "product_count": [
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "f",
+        "type": "ALL",
+        "possible_keys": "idx_base_id",
+        "key": null,
+        "rows": 987306,
+        "filtered": 100.0,
+        "Extra": "Using where; Start temporary"
+      },
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "b",
+        "type": "eq_ref",
+        "possible_keys": "PRIMARY,uniq_std_id,idx_std_type,idx_release_date,idx_type_release,idx_type_state_date,idx_ex_state,idx_std_id_norm,idx_std_base_release_date,idx_std_chinesename",
+        "key": "PRIMARY",
+        "rows": 1,
+        "filtered": 72.62,
+        "Extra": "Using where; End temporary"
+      }
+    ],
+    "product_page": [
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "f",
+        "type": "ALL",
+        "possible_keys": "idx_base_id",
+        "key": null,
+        "rows": 987306,
+        "filtered": 100.0,
+        "Extra": "Using where; Using temporary; Using filesort; Start temporary"
+      },
+      {
+        "id": 1,
+        "select_type": "SIMPLE",
+        "table": "b",
+        "type": "eq_ref",
+        "possible_keys": "PRIMARY",
+        "key": "PRIMARY",
+        "rows": 1,
+        "filtered": 72.62,
+        "Extra": "Using where; End temporary"
+      }
+    ]
+  },
+  "server_version": "8.0.46-0ubuntu0.22.04.4"
+}

@@ -1,0 +1,26 @@
+{
+  "synthetic_lookups": [
+    {
+      "file_count": 50000,
+      "queries": 20,
+      "linear_seconds": 0.21481275605037808,
+      "index_build_seconds": 0.013117433001752943,
+      "indexed_seconds": 1.0789954103529453e-05,
+      "standard_miss_seconds": 0.004617192025762051
+    },
+    {
+      "file_count": 200000,
+      "queries": 20,
+      "linear_seconds": 0.8688258239999413,
+      "index_build_seconds": 0.07350735500222072,
+      "indexed_seconds": 1.731002703309059e-05,
+      "standard_miss_seconds": 0.01769596600206569
+    }
+  ],
+  "stat_calls_for_positive_cache_hit": 1,
+  "resolved_item_database_rematches": 0,
+  "query_only_item_database_rematches": 1,
+  "actual_batch_archive_bytes": 907,
+  "one_unreadable_file_aborts_whole_archive": true,
+  "builder_schema_index_error": "no such column: std_id_compact"
+}

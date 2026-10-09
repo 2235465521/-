@@ -25,8 +25,22 @@
   // 自定义上限相关元素
   const batchMaxRowsInput = el("batchMaxRowsInput");
   const batchLimitChips = el("batchLimitChips");
+  const batchCardTitle = el("batchCardTitle");
   const batchCardDesc = el("batchCardDesc");
 
+  // 模式切换与元素
+  const tabBatchExcel = el("tabBatchExcel");
+  const tabBatchText = el("tabBatchText");
+  const tabCardExcel = el("tabCardExcel");
+  const tabCardText = el("tabCardText");
+  const batchGuideExcel = el("batchGuideExcel");
+  const batchGuideText = el("batchGuideText");
+  const batchTextWrap = el("batchTextWrap");
+  const btnFillTextExample = el("btnFillTextExample");
+  const btnClearTextInput = el("btnClearTextInput");
+  const batchTextInput = el("batchTextInput");
+
+  let currentInputMode = "excel"; // "excel" | "text"
   let parsedItems = [];
   let parsedMeta = null;
   let previewMap = new Map();
@@ -45,9 +59,10 @@
 
   function syncLimitUI(limitVal) {
     const num = limitVal !== undefined && limitVal !== null ? Number(limitVal) : getMaxRowsSetting();
-    if (batchMaxRowsInput) {
-      batchMaxRowsInput.value = num === 0 ? "" : String(num);
-    }
+    const strVal = num === 0 ? "" : String(num);
+
+    if (batchMaxRowsInput) batchMaxRowsInput.value = strVal;
+
     if (batchLimitChips) {
       batchLimitChips.querySelectorAll(".btn-limit-chip").forEach(btn => {
         const d = Number(btn.dataset.limit);
@@ -58,9 +73,20 @@
         }
       });
     }
-    const descText = num === 0 ? "支持 .xlsx、.xlsm、.csv，当前：全量解析（不限条数）" : `支持 .xlsx、.xlsm、.csv，当前上限：${num} 条`;
-    if (batchCardDesc) batchCardDesc.textContent = descText;
-    setMeta(`后端模式 · 自动读 E 盘 · 支持 .xlsx / .csv · ${num === 0 ? "全量不限" : `上限 ${num} 条`}`);
+
+    if (batchCardDesc) {
+      if (currentInputMode === "excel") {
+        batchCardDesc.textContent = num === 0 ? "支持 .xlsx、.xlsm、.csv，当前：全量解析（不限条数）" : `支持 .xlsx、.xlsm、.csv，当前上限：${num} 条`;
+      } else {
+        const text = batchTextInput ? batchTextInput.value : "";
+        const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+        const count = lines.length;
+        batchCardDesc.innerHTML = count > 0
+          ? `每行一条，已检测 <span style="font-weight:700;color:var(--accent);">${count}</span> 条待解析标准（${num === 0 ? "全量不限" : `上限 ${num} 条`}）`
+          : `每行一条标准号，支持直接从网页或文档复制粘贴（${num === 0 ? "全量不限" : `上限 ${num} 条`}）`;
+      }
+    }
+    setMeta(`后端模式 · 自动读 E 盘 · ${currentInputMode === "excel" ? "Excel表格" : "文本模式"} · ${num === 0 ? "全量不限" : `上限 ${num} 条`}`);
   }
 
   function escapeHtml(s) {
@@ -107,6 +133,40 @@
     if (btnBatchPreview) btnBatchPreview.disabled = true;
     if (btnBatchDownload) btnBatchDownload.disabled = true;
     setFileName("");
+  }
+
+  function switchInputMode(mode) {
+    currentInputMode = mode;
+    [tabBatchExcel, tabCardExcel].forEach(btn => {
+      if (btn) btn.classList.toggle("is-active", mode === "excel");
+    });
+    [tabBatchText, tabCardText].forEach(btn => {
+      if (btn) btn.classList.toggle("is-active", mode === "text");
+    });
+
+    if (batchGuideExcel) batchGuideExcel.hidden = (mode !== "excel");
+    if (batchGuideText) batchGuideText.hidden = (mode !== "text");
+
+    if (batchDropzone) batchDropzone.hidden = (mode !== "excel");
+    if (batchTextWrap) batchTextWrap.hidden = (mode !== "text");
+
+    if (batchCardTitle) {
+      batchCardTitle.textContent = mode === "excel" ? "上传已填写的表格" : "粘贴标准清单文本";
+    }
+    if (btnBatchParse) {
+      btnBatchParse.textContent = mode === "excel" ? "解析文件" : "解析文本";
+    }
+
+    const limit = getMaxRowsSetting();
+    syncLimitUI(limit);
+    setBusy(false);
+  }
+
+  function updateTextLineCount() {
+    if (currentInputMode === "text") {
+      const limit = getMaxRowsSetting();
+      syncLimitUI(limit);
+    }
   }
 
   function setFileName(name) {
@@ -156,12 +216,13 @@
     if (btnBatchParse) btnBatchParse.disabled = busy;
     if (btnBatchPreview) btnBatchPreview.disabled = busy || !parsedItems.length;
     if (btnBatchDownload) btnBatchDownload.disabled = busy || !parsedItems.length;
+
+    const cancelText = busy && previewAbortController ? "取消预览" : (busy && downloadAbortController ? "取消下载" : "");
+    const showCancel = Boolean(cancelText);
+
     if (btnBatchCancelPreview) {
-      if (busy && previewAbortController) {
-        btnBatchCancelPreview.textContent = "取消预览";
-        btnBatchCancelPreview.style.display = "inline-block";
-      } else if (busy && downloadAbortController) {
-        btnBatchCancelPreview.textContent = "取消下载";
+      if (showCancel) {
+        btnBatchCancelPreview.textContent = cancelText;
         btnBatchCancelPreview.style.display = "inline-block";
       } else {
         btnBatchCancelPreview.style.display = "none";
@@ -305,9 +366,58 @@
     }
   }
 
+  async function doParseText() {
+    const text = batchTextInput ? batchTextInput.value.trim() : "";
+    if (!text) {
+      setFeedback('<div class="alert">请先输入或粘贴待下载的标准文本</div>');
+      return;
+    }
+    previewMap = new Map();
+    selectedRows.clear();
+    setBusy(true);
+    setFeedback('<div class="loading"><div class="spinner"></div><div class="loading-msg">正在解析标准文本…</div></div>');
+
+    const maxRows = getMaxRowsSetting();
+    try {
+      const res = await fetch("/api/batch/parse_text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: text,
+          max_rows: maxRows,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setFeedback(`<div class="alert">${escapeHtml(data.error || "解析文本失败")}</div>`);
+        parsedItems = [];
+        parsedMeta = null;
+        renderTable();
+        return;
+      }
+      parsedItems = data.items || [];
+      parsedMeta = data.meta || null;
+      selectedRows = new Set(parsedItems.map(it => it.row));
+
+      const trunc = parsedMeta?.truncated ? `（已达当前上限 ${parsedMeta.max_rows} 条，可在上方调整上限）` : "";
+      setMeta(`后端模式 · 自动读 E 盘 · 文本模式已识别 ${parsedItems.length} 条标准号${trunc}`);
+      renderTable();
+      setStep(2);
+      setFeedback(
+        `<div class="batch-hint">✅ 文本解析成功，共识别出 <strong>${parsedItems.length}</strong> 条标准${trunc}。<br/>👉 请点击「<strong>预览匹配</strong>」查看检索匹配结果，或直接点击「<strong>下载 ZIP</strong>」。</div>`
+      );
+      if (btnBatchPreview) btnBatchPreview.disabled = false;
+      if (btnBatchDownload) btnBatchDownload.disabled = false;
+    } catch (e) {
+      setFeedback(`<div class="alert">解析失败：${escapeHtml(e.message || "未知错误")}</div>`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function doPreview() {
     if (!parsedItems.length) {
-      setFeedback('<div class="alert">请先解析 Excel</div>');
+      setFeedback(`<div class="alert">请先解析${currentInputMode === "text" ? "文本" : "Excel"}</div>`);
       return;
     }
     if (previewMap.size > 0) {
@@ -358,11 +468,13 @@
         const row = parsedItems[i]?.row ?? r.row ?? i + 1;
         previewMap.set(row, r);
       });
+      showTableSection(true);
       renderTable();
       setStep(3);
       const s = data.summary || {};
+      const failedCount = s.failed !== undefined ? s.failed : (s.total - (s.success || 0));
       setFeedback(
-        `<div class="batch-hint">预览完成：共 ${s.total} 条，预计可下载 <strong>${s.success}</strong> 个 PDF，失败 ${failed} 条。</div>`
+        `<div class="batch-hint">预览完成：共 ${s.total} 条，预计可下载 <strong>${s.success}</strong> 个 PDF，失败 ${failedCount} 条。</div>`
       );
     } catch (e) {
       if (e.name === "AbortError") {
@@ -379,11 +491,11 @@
 
   async function doDownload() {
     if (!parsedItems.length) {
-      setFeedback('<div class="alert">请先解析 Excel</div>');
+      setFeedback(`<div class="alert">请先解析${currentInputMode === "text" ? "文本" : "Excel"}</div>`);
       return;
     }
     const file = batchFile?.files?.[0];
-    if (!file) {
+    if (currentInputMode === "excel" && !file) {
       setFeedback('<div class="alert">请重新选择 Excel 文件后再下载</div>');
       return;
     }
@@ -409,22 +521,34 @@
       }
     }
 
+    // 复用预览匹配结果：如果已执行过预览，将有效文件的路径与状态随请求一并发送，实现后端 0 毫秒跳过重复检索
+    const enrichedItems = downloadItems.map(it => {
+      const prev = previewMap.get(it.row);
+      if (prev && prev.status === "ok") {
+        return {
+          ...it,
+          pdf_path: prev.pdf_path,
+          zip_name: prev.zip_name,
+          std_id: prev.std_id || it.query,
+          std_chinesename: prev.std_chinesename || it.name_hint || "",
+          file_name: prev.file_name,
+          status: "ok",
+        };
+      }
+      return it;
+    });
+
     downloadAbortController = new AbortController();
     setBusy(true);
-    setFeedback('<div class="loading"><div class="spinner"></div><div class="loading-msg">正在匹配标准并打包 ZIP，请稍候…</div></div>');
-    
-    const downloadTimeoutId = setTimeout(() => {
-      const msgEl = batchFeedback?.querySelector(".loading-msg");
-      if (msgEl) {
-        msgEl.innerHTML = `正在匹配标准并打包 ZIP，请稍候…<br><span class="loading-warn-text">⚠️ 正在匹配并打包中，如果文件过大或系统繁忙请耐心等候...</span>`;
-      }
-    }, 5000);
+    setFeedback('<div class="loading"><div class="spinner"></div><div class="loading-msg">正在快速组装 ZIP 包，准备传输…</div></div>');
 
     try {
       const scan = true;
       const fd = new FormData();
-      fd.append("file", file);
-      fd.append("items", JSON.stringify(downloadItems));
+      if (currentInputMode === "excel" && file) {
+        fd.append("file", file);
+      }
+      fd.append("items", JSON.stringify(enrichedItems));
       fd.append("only_pdf", onlyPdf ? "1" : "0");
       const maxRows = getMaxRowsSetting();
       if (maxRows > 0) {
@@ -432,7 +556,7 @@
       } else {
         fd.append("max_rows", "0");
       }
-      
+
       const res = await fetch(`/api/batch/download?scan_disk=${scan ? "1" : "0"}&only_pdf=${onlyPdf ? "1" : "0"}`, {
         method: "POST",
         body: fd,
@@ -453,7 +577,40 @@
         setFeedback(`<div class="alert">${escapeHtml(err)}</div>`);
         return;
       }
-      const blob = await res.blob();
+
+      // 流式读取分块并实时计算传输字节与进度
+      const contentLength = res.headers.get("content-length");
+      const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+      let loadedBytes = 0;
+      const reader = res.body ? res.body.getReader() : null;
+      let blob;
+
+      if (reader) {
+        const chunks = [];
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          loadedBytes += value.length;
+
+          const mb = (loadedBytes / 1048576).toFixed(1);
+          if (totalBytes > 0) {
+            const totalMb = (totalBytes / 1048576).toFixed(1);
+            const percent = Math.min(100, Math.round((loadedBytes / totalBytes) * 100));
+            setFeedback(
+              `<div class="loading"><div class="spinner"></div><div class="loading-msg">正在传输 ZIP 文件…<br/><strong>${mb} MB / ${totalMb} MB (${percent}%)</strong>，请勿关闭页面</div></div>`
+            );
+          } else {
+            setFeedback(
+              `<div class="loading"><div class="spinner"></div><div class="loading-msg">正在传输 ZIP 文件…<br/>已接收 <strong>${mb} MB</strong>，持续传输中…</div></div>`
+            );
+          }
+        }
+        blob = new Blob(chunks, { type: "application/zip" });
+      } else {
+        blob = await res.blob();
+      }
+
       const disp = res.headers.get("content-disposition") || "";
       let name = "标准PDF批量下载.zip";
       const m = /filename\*?=(?:UTF-8'')?["']?([^"';]+)/i.exec(disp);
@@ -465,7 +622,7 @@
       a.click();
       URL.revokeObjectURL(url);
       setFeedback(
-        '<div class="batch-hint">ZIP 已开始下载。内含 PDF、带「否」备注的 Excel 及下载清单。<br/>⚠️ <strong>重要提示：</strong>若下载被浏览器拦截，请在浏览器右上角下载列表或地址栏右侧选择<strong>「保留」</strong>或<strong>「允许下载」</strong>。</div>'
+        '<div class="batch-hint">✅ ZIP 已生成并开始下载。内含 PDF、带「否」备注的 Excel 及下载清单。<br/>⚠️ <strong>提示：</strong>若下载被浏览器拦截，请在浏览器右上角下载列表或地址栏右侧选择<strong>「保留」</strong>或<strong>「允许下载」</strong>。</div>'
       );
       setStep(3);
     } catch (e) {
@@ -627,9 +784,58 @@
   } catch (e) {}
   syncLimitUI(savedLimit);
 
-  if (btnBatchParse) btnBatchParse.addEventListener("click", doParse);
+  if (btnBatchParse) {
+    btnBatchParse.addEventListener("click", () => {
+      if (currentInputMode === "text") {
+        doParseText();
+      } else {
+        doParse();
+      }
+    });
+  }
   if (btnBatchPreview) btnBatchPreview.addEventListener("click", doPreview);
   if (btnBatchDownload) btnBatchDownload.addEventListener("click", doDownload);
+
+  // 模式切换监听（顶部 Tabs 与 卡片内 Sub-tabs 联动）
+  [tabBatchExcel, tabCardExcel].forEach(btn => {
+    if (btn) btn.addEventListener("click", () => switchInputMode("excel"));
+  });
+  [tabBatchText, tabCardText].forEach(btn => {
+    if (btn) btn.addEventListener("click", () => switchInputMode("text"));
+  });
+
+  // 文本模式操作监听
+  if (batchTextInput) {
+    batchTextInput.addEventListener("input", updateTextLineCount);
+  }
+
+  if (btnFillTextExample) {
+    btnFillTextExample.addEventListener("click", () => {
+      if (batchTextInput) {
+        batchTextInput.value = [
+          "GB/T 19001-2016 质量管理体系 要求",
+          "GB 50016-2014 建筑设计防火规范",
+          "GB/T 1002-2024 家用和类似用途单相插头插座",
+          "GB 5749-2022 生活饮用水卫生标准",
+          "DL/T 5161.1-2018 电气装置安装工程质量检验及评定规程"
+        ].join("\n");
+        updateTextLineCount();
+        setFeedback('<div class="batch-hint">已填入示例标准清单，可点击「<strong>解析文本</strong>」体验解析。</div>');
+      }
+    });
+  }
+
+  if (btnClearTextInput) {
+    btnClearTextInput.addEventListener("click", () => {
+      if (batchTextInput) {
+        batchTextInput.value = "";
+        updateTextLineCount();
+      }
+      if (currentInputMode === "text") {
+        clearUploadedFile();
+      }
+    });
+  }
 
   setStep(1);
 

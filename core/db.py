@@ -523,8 +523,11 @@ class Database:
         page = max(1, page)
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
-        # Cache lookup
+        if not q:
+            return self._empty_page(page, per_page, "text")
+
         cache_params = {
+            "action": "search",
             "q": q,
             "page": page,
             "per_page": per_page,
@@ -536,44 +539,52 @@ class Database:
         cached = self._cache_manager.get_cached(cache_key)
         if cached:
             return cached
-        if not q:
-            return self._empty_page(page, per_page, "text")
-        # Perform the actual query
+
+        count_params = {
+            "action": "search_count",
+            "q": q,
+            "pdf_only": pdf_only,
+            "std_folder": std_folder,
+        }
+        count_key = self._cache_manager.make_cache_key(count_params)
+
         if self._mysql_available():
             result = self._search_page_mysql(
-                q, page, per_page, offset, pdf_only, std_folder, verify_disk
+                q, page, per_page, offset, pdf_only, std_folder, verify_disk, count_key=count_key
             )
         else:
             result = self._search_page_sqlite(
-                q, page, per_page, offset, pdf_only, std_folder, verify_disk
+                q, page, per_page, offset, pdf_only, std_folder, verify_disk, count_key=count_key
             )
-        # Store result in cache
+
         self._cache_manager.set_cached(cache_key, result)
-        # Asynchronously preload next 1-2 pages
-        def _preload():
-            for next_page in range(page + 1, page + 3):
-                # Build cache key for the next page
-                next_params = {
-                    "q": q,
-                    "page": next_page,
-                    "per_page": per_page,
-                    "pdf_only": pdf_only,
-                    "std_folder": std_folder,
-                    "verify_disk": verify_disk,
-                }
-                next_key = self._cache_manager.make_cache_key(next_params)
-                if self._cache_manager.get_cached(next_key) is None:
+
+        next_page = page + 1
+        if result.get("total_pages", 0) >= next_page:
+            next_params = {
+                "action": "search",
+                "q": q,
+                "page": next_page,
+                "per_page": per_page,
+                "pdf_only": pdf_only,
+                "std_folder": std_folder,
+                "verify_disk": verify_disk,
+            }
+            next_key = self._cache_manager.make_cache_key(next_params)
+            if self._cache_manager.get_cached(next_key) is None:
+                def _preload():
                     next_offset = (next_page - 1) * per_page
                     if self._mysql_available():
                         next_res = self._search_page_mysql(
-                            q, next_page, per_page, next_offset, pdf_only, std_folder, verify_disk
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, verify_disk, count_key=count_key
                         )
                     else:
                         next_res = self._search_page_sqlite(
-                            q, next_page, per_page, next_offset, pdf_only, std_folder, verify_disk
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, verify_disk, count_key=count_key
                         )
                     self._cache_manager.set_cached(next_key, next_res)
-        threading.Thread(target=_preload, daemon=True).start()
+                threading.Thread(target=_preload, daemon=True).start()
+
         return result
 
     def browse_page(
@@ -602,41 +613,48 @@ class Database:
         if cached:
             return cached
 
+        count_params = {
+            "action": "browse_count",
+            "pdf_only": pdf_only,
+            "std_folder": std_folder,
+        }
+        count_key = self._cache_manager.make_cache_key(count_params)
+
         if self._mysql_available():
             result = self._browse_page_mysql(
-                page, per_page, offset, pdf_only, std_folder, verify_disk
+                page, per_page, offset, pdf_only, std_folder, verify_disk, count_key=count_key
             )
         else:
             result = self._browse_page_sqlite(
-                page, per_page, offset, pdf_only, std_folder, verify_disk
+                page, per_page, offset, pdf_only, std_folder, verify_disk, count_key=count_key
             )
 
         self._cache_manager.set_cached(cache_key, result)
 
-        # Asynchronously preload next 2 pages in background
-        def _preload():
-            for next_page in range(page + 1, page + 3):
-                next_params = {
-                    "action": "browse",
-                    "page": next_page,
-                    "per_page": per_page,
-                    "pdf_only": pdf_only,
-                    "std_folder": std_folder,
-                    "verify_disk": verify_disk,
-                }
-                next_key = self._cache_manager.make_cache_key(next_params)
-                if self._cache_manager.get_cached(next_key) is None:
+        next_page = page + 1
+        if result.get("total_pages", 0) >= next_page:
+            next_params = {
+                "action": "browse",
+                "page": next_page,
+                "per_page": per_page,
+                "pdf_only": pdf_only,
+                "std_folder": std_folder,
+                "verify_disk": verify_disk,
+            }
+            next_key = self._cache_manager.make_cache_key(next_params)
+            if self._cache_manager.get_cached(next_key) is None:
+                def _preload():
                     next_offset = (next_page - 1) * per_page
                     if self._mysql_available():
                         next_res = self._browse_page_mysql(
-                            next_page, per_page, next_offset, pdf_only, std_folder, verify_disk
+                            next_page, per_page, next_offset, pdf_only, std_folder, verify_disk, count_key=count_key
                         )
                     else:
                         next_res = self._browse_page_sqlite(
-                            next_page, per_page, next_offset, pdf_only, std_folder, verify_disk
+                            next_page, per_page, next_offset, pdf_only, std_folder, verify_disk, count_key=count_key
                         )
                     self._cache_manager.set_cached(next_key, next_res)
-        threading.Thread(target=_preload, daemon=True).start()
+                threading.Thread(target=_preload, daemon=True).start()
 
         return result
 
@@ -648,6 +666,7 @@ class Database:
         pdf_only: bool,
         std_folder: str | None,
         verify_disk: bool = False,
+        count_key: str | None = None,
     ) -> dict:
         if not SQLITE_PATH.is_file():
             return self._empty_page(page, per_page, "browse")
@@ -659,12 +678,16 @@ class Database:
         where = (" AND ".join(where_parts) if where_parts else "1=1") + folder_sql
         args.extend(folder_args)
         order = "ORDER BY b.release_date DESC"
+        total = self._cache_manager.get_cached_count(count_key) if count_key else None
         with self._sqlite() as conn:
-            cur = conn.execute(
-                f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {where}",
-                args,
-            )
-            total = int(cur.fetchone()[0])
+            if total is None:
+                cur = conn.execute(
+                    f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {where}",
+                    args,
+                )
+                total = int(cur.fetchone()[0])
+                if count_key:
+                    self._cache_manager.set_cached_count(count_key, total)
             cur = conn.execute(
                 f"""
                 SELECT DISTINCT b.* FROM std_base b
@@ -696,6 +719,7 @@ class Database:
         pdf_only: bool,
         std_folder: str | None,
         verify_disk: bool = False,
+        count_key: str | None = None,
     ) -> dict:
         where_parts: list[str] = []
         args: list = []
@@ -707,16 +731,21 @@ class Database:
         where = (" AND ".join(where_parts) if where_parts else "1=1") + folder_sql
         args.extend(folder_args)
         order = "ORDER BY b.release_date DESC"
+        opt_hint = "/*+ SET_VAR(optimizer_switch='semijoin=off') */ " if pdf_only else ""
+        total = self._cache_manager.get_cached_count(count_key) if count_key else None
         with self._mysql() as conn:
             cur = conn.cursor()
-            cur.execute(
-                f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {where}",
-                args,
-            )
-            total = int(cur.fetchone()["c"])
+            if total is None:
+                cur.execute(
+                    f"SELECT {opt_hint}COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {where}",
+                    args,
+                )
+                total = int(cur.fetchone()["c"])
+                if count_key:
+                    self._cache_manager.set_cached_count(count_key, total)
             cur.execute(
                 f"""
-                SELECT DISTINCT b.* FROM std_base b
+                SELECT {opt_hint}DISTINCT b.* FROM std_base b
                 WHERE {where}
                 {order}
                 LIMIT %s OFFSET %s
@@ -756,6 +785,7 @@ class Database:
         pdf_only: bool,
         std_folder: str | None,
         verify_disk: bool = False,
+        count_key: str | None = None,
     ) -> dict:
         if not SQLITE_PATH.is_file():
             return self._empty_page(page, per_page, "text")
@@ -768,12 +798,16 @@ class Database:
         folder_sql, folder_args = self._folder_exists_sql(std_folder)
         where = " AND ".join(where_parts) + folder_sql
         args.extend(folder_args)
+        total = self._cache_manager.get_cached_count(count_key) if count_key else None
         with self._sqlite() as conn:
-            cur = conn.execute(
-                f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {where}",
-                args,
-            )
-            total = int(cur.fetchone()[0])
+            if total is None:
+                cur = conn.execute(
+                    f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {where}",
+                    args,
+                )
+                total = int(cur.fetchone()[0])
+                if count_key:
+                    self._cache_manager.set_cached_count(count_key, total)
             cur = conn.execute(
                 f"""
                 SELECT DISTINCT b.* FROM std_base b
@@ -805,6 +839,7 @@ class Database:
         pdf_only: bool,
         std_folder: str | None,
         verify_disk: bool = False,
+        count_key: str | None = None,
     ) -> dict:
         clause, clause_args = build_keyword_match_clause(q, param="%s", use_std_id_norm=True)
         order_sql, order_args = mysql_keyword_match_order_by(q)
@@ -817,16 +852,21 @@ class Database:
             folder_sql = folder_sql.replace("?", "%s")
         where = " AND ".join(where_parts) + folder_sql
         args.extend(folder_args)
+        opt_hint = "/*+ SET_VAR(optimizer_switch='semijoin=off') */ " if pdf_only else ""
+        total = self._cache_manager.get_cached_count(count_key) if count_key else None
         with self._mysql() as conn:
             cur = conn.cursor()
-            cur.execute(
-                f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {where}",
-                args,
-            )
-            total = int(cur.fetchone()["c"])
+            if total is None:
+                cur.execute(
+                    f"SELECT {opt_hint}COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {where}",
+                    args,
+                )
+                total = int(cur.fetchone()["c"])
+                if count_key:
+                    self._cache_manager.set_cached_count(count_key, total)
             cur.execute(
                 f"""
-                SELECT DISTINCT b.* FROM std_base b
+                SELECT {opt_hint}DISTINCT b.* FROM std_base b
                 WHERE {where}
                 ORDER BY {order_sql}
                 LIMIT %s OFFSET %s
@@ -867,13 +907,12 @@ class Database:
         page = max(1, page)
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
-        # Cache lookup for advanced search
-        # Serialize filters to dict for key generation
         try:
             filter_dict = flt.__dict__
         except Exception:
             filter_dict = {}
         cache_params = {
+            "action": "advanced",
             "q": q,
             "page": page,
             "per_page": per_page,
@@ -886,50 +925,63 @@ class Database:
         cached = self._cache_manager.get_cached(cache_key)
         if cached:
             return cached
+
+        count_params = {
+            "action": "advanced_count",
+            "q": q,
+            "pdf_only": pdf_only,
+            "std_folder": std_folder,
+            "filters": filter_dict,
+        }
+        count_key = self._cache_manager.make_cache_key(count_params)
+
         from core.unit_geo import geo_index_ready, needs_geo_filter
 
         if needs_geo_filter(flt) and geo_index_ready():
             result = self._search_page_advanced_sqlite(
-                q, page, per_page, offset, pdf_only, std_folder, flt, verify_disk
+                q, page, per_page, offset, pdf_only, std_folder, flt, verify_disk, count_key=count_key
             )
         elif self._mysql_available():
             result = self._search_page_advanced_mysql(
-                q, page, per_page, offset, pdf_only, std_folder, flt, verify_disk
+                q, page, per_page, offset, pdf_only, std_folder, flt, verify_disk, count_key=count_key
             )
         else:
             result = self._search_page_advanced_sqlite(
-                q, page, per_page, offset, pdf_only, std_folder, flt, verify_disk
+                q, page, per_page, offset, pdf_only, std_folder, flt, verify_disk, count_key=count_key
             )
         self._cache_manager.set_cached(cache_key, result)
-        # Asynchronously preload next pages for advanced search
-        def _preload_adv():
-            for next_page in range(page + 1, page + 3):
-                next_params = {
-                    "q": q,
-                    "page": next_page,
-                    "per_page": per_page,
-                    "pdf_only": pdf_only,
-                    "std_folder": std_folder,
-                    "filters": filter_dict,
-                    "verify_disk": verify_disk,
-                }
-                next_key = self._cache_manager.make_cache_key(next_params)
-                if self._cache_manager.get_cached(next_key) is None:
+
+        next_page = page + 1
+        if result.get("total_pages", 0) >= next_page:
+            next_params = {
+                "action": "advanced",
+                "q": q,
+                "page": next_page,
+                "per_page": per_page,
+                "pdf_only": pdf_only,
+                "std_folder": std_folder,
+                "filters": filter_dict,
+                "verify_disk": verify_disk,
+            }
+            next_key = self._cache_manager.make_cache_key(next_params)
+            if self._cache_manager.get_cached(next_key) is None:
+                def _preload_adv():
                     next_offset = (next_page - 1) * per_page
                     if needs_geo_filter(flt) and geo_index_ready():
                         next_res = self._search_page_advanced_sqlite(
-                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt, verify_disk
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt, verify_disk, count_key=count_key
                         )
                     elif self._mysql_available():
                         next_res = self._search_page_advanced_mysql(
-                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt, verify_disk
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt, verify_disk, count_key=count_key
                         )
                     else:
                         next_res = self._search_page_advanced_sqlite(
-                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt, verify_disk
+                            q, next_page, per_page, next_offset, pdf_only, std_folder, flt, verify_disk, count_key=count_key
                         )
                     self._cache_manager.set_cached(next_key, next_res)
-        threading.Thread(target=_preload_adv, daemon=True).start()
+                threading.Thread(target=_preload_adv, daemon=True).start()
+
         return result
 
     def _search_page_advanced_sqlite(
@@ -942,6 +994,7 @@ class Database:
         std_folder: str | None,
         filters,
         verify_disk: bool = False,
+        count_key: str | None = None,
     ) -> dict:
         from core.search_filters import build_advanced_where
 
@@ -959,13 +1012,17 @@ class Database:
         base_where = "1=1" + where_extra
         from core.unit_geo import attach_units_db
 
+        total = self._cache_manager.get_cached_count(count_key) if count_key else None
         with self._sqlite() as conn:
             attach_units_db(conn)
-            cur = conn.execute(
-                f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {base_where}",
-                args,
-            )
-            total = int(cur.fetchone()[0])
+            if total is None:
+                cur = conn.execute(
+                    f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {base_where}",
+                    args,
+                )
+                total = int(cur.fetchone()[0])
+                if count_key:
+                    self._cache_manager.set_cached_count(count_key, total)
             cur = conn.execute(
                 f"""
                 SELECT DISTINCT b.* FROM std_base b
@@ -998,6 +1055,7 @@ class Database:
         std_folder: str | None,
         filters,
         verify_disk: bool = False,
+        count_key: str | None = None,
     ) -> dict:
         from core.search_filters import build_advanced_where
 
@@ -1013,16 +1071,21 @@ class Database:
         )
         base_where = "1=1" + where_extra
         mysql_args = list(args)
+        opt_hint = "/*+ SET_VAR(optimizer_switch='semijoin=off') */ " if pdf_only else ""
+        total = self._cache_manager.get_cached_count(count_key) if count_key else None
         with self._mysql() as conn:
             cur = conn.cursor()
-            cur.execute(
-                f"SELECT COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {base_where}",
-                mysql_args,
-            )
-            total = int(cur.fetchone()["c"])
+            if total is None:
+                cur.execute(
+                    f"SELECT {opt_hint}COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {base_where}",
+                    mysql_args,
+                )
+                total = int(cur.fetchone()["c"])
+                if count_key:
+                    self._cache_manager.set_cached_count(count_key, total)
             cur.execute(
                 f"""
-                SELECT DISTINCT b.* FROM std_base b
+                SELECT {opt_hint}DISTINCT b.* FROM std_base b
                 WHERE {base_where}
                 ORDER BY b.std_id
                 LIMIT %s OFFSET %s
@@ -1067,18 +1130,72 @@ class Database:
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
         primary = (primary_keyword or kws[0]).strip()
+
+        # Cache lookup for product cluster search
+        cache_params = {
+            "action": "cluster",
+            "kws": sorted(kws),
+            "primary": primary,
+            "page": page,
+            "per_page": per_page,
+            "pdf_only": pdf_only,
+            "std_folder": std_folder,
+            "verify_disk": verify_disk,
+        }
+        cache_key = self._cache_manager.make_cache_key(cache_params)
+        cached = self._cache_manager.get_cached(cache_key)
+        if cached:
+            return cached
+
+        count_params = {
+            "action": "cluster_count",
+            "kws": sorted(kws),
+            "primary": primary,
+            "pdf_only": pdf_only,
+            "std_folder": std_folder,
+        }
+        count_key = self._cache_manager.make_cache_key(count_params)
+
         if self._mysql_available():
-            return self._search_page_cluster_mysql(
-                kws, primary, page, per_page, offset, pdf_only, std_folder, verify_disk
+            result = self._search_page_cluster_mysql(
+                kws, primary, page, per_page, offset, pdf_only, std_folder, verify_disk, count_key=count_key
             )
-        if SQLITE_PATH.is_file():
-            return self._search_page_cluster_sqlite(
-                kws, primary, page, per_page, offset, pdf_only, std_folder, verify_disk
+        else:
+            result = self._search_page_cluster_sqlite(
+                kws, primary, page, per_page, offset, pdf_only, std_folder, verify_disk, count_key=count_key
             )
-        # Fallback to SQLite if neither backend is confirmed
-        return self._search_page_cluster_sqlite(
-            kws, primary, page, per_page, offset, pdf_only, std_folder, verify_disk
-        )
+
+        self._cache_manager.set_cached(cache_key, result)
+
+        # Asynchronously preload next 1 page if not cached
+        next_page = page + 1
+        if result.get("total_pages", 0) >= next_page:
+            next_params = {
+                "action": "cluster",
+                "kws": sorted(kws),
+                "primary": primary,
+                "page": next_page,
+                "per_page": per_page,
+                "pdf_only": pdf_only,
+                "std_folder": std_folder,
+                "verify_disk": verify_disk,
+            }
+            next_key = self._cache_manager.make_cache_key(next_params)
+            if self._cache_manager.get_cached(next_key) is None:
+                def _preload():
+                    next_offset = (next_page - 1) * per_page
+                    if self._mysql_available():
+                        next_res = self._search_page_cluster_mysql(
+                            kws, primary, next_page, per_page, next_offset, pdf_only, std_folder, verify_disk, count_key=count_key
+                        )
+                    else:
+                        next_res = self._search_page_cluster_sqlite(
+                            kws, primary, next_page, per_page, next_offset, pdf_only, std_folder, verify_disk, count_key=count_key
+                        )
+                    self._cache_manager.set_cached(next_key, next_res)
+                threading.Thread(target=_preload, daemon=True).start()
+
+        return result
 
     def _cluster_score_sql(
         self, keywords: list[str], primary: str, mysql: bool
@@ -1113,6 +1230,7 @@ class Database:
         pdf_only: bool,
         std_folder: str | None,
         verify_disk: bool = False,
+        count_key: str | None = None,
     ) -> dict:
         if not SQLITE_PATH.is_file():
             return self._empty_page(page, per_page, "product_cluster")
@@ -1120,11 +1238,18 @@ class Database:
         where_sql, where_args = self._cluster_name_where_sql(keywords, False)
         folder_sql, folder_args = self._folder_exists_sql(std_folder)
         pdf_sql = f" AND {pdf_only_exists_sql(mysql=False)}" if pdf_only else ""
+        total = self._cache_manager.get_cached_count(count_key) if count_key else None
         with self._sqlite() as conn:
-            count_sql = f"""
-                SELECT COUNT(DISTINCT b.id) AS c FROM std_base b
-                WHERE {where_sql}{pdf_sql}{folder_sql}
-            """
+            if total is None:
+                count_sql = f"""
+                    SELECT COUNT(DISTINCT b.id) AS c FROM std_base b
+                    WHERE {where_sql}{pdf_sql}{folder_sql}
+                """
+                count_args = where_args + list(folder_args)
+                cur = conn.execute(count_sql, count_args)
+                total = int(cur.fetchone()[0])
+                if count_key:
+                    self._cache_manager.set_cached_count(count_key, total)
             search_sql = f"""
                 SELECT DISTINCT b.*, ({score_sql}) AS match_score
                 FROM std_base b
@@ -1132,12 +1257,9 @@ class Database:
                 ORDER BY match_score DESC, b.std_id
                 LIMIT ? OFFSET ?
             """
-            count_args = where_args + list(folder_args)
-            cur = conn.execute(count_sql, count_args)
-            total = int(cur.fetchone()[0])
             cur = conn.execute(
                 search_sql,
-                where_args + score_args + list(folder_args) + [per_page, offset],
+                score_args + where_args + list(folder_args) + [per_page, offset],
             )
             rows = [dict(r) for r in cur.fetchall()]
             items = self._lite_items_sqlite(conn, rows, verify_disk=verify_disk)
@@ -1162,6 +1284,7 @@ class Database:
         pdf_only: bool,
         std_folder: str | None,
         verify_disk: bool = False,
+        count_key: str | None = None,
     ) -> dict:
         score_sql, score_args = self._cluster_score_sql(keywords, primary, True)
         where_sql, where_args = self._cluster_name_where_sql(keywords, True)
@@ -1169,24 +1292,29 @@ class Database:
         if folder_sql:
             folder_sql = folder_sql.replace("?", "%s")
         pdf_sql = f" AND {pdf_only_exists_sql(mysql=True)}" if pdf_only else ""
+        opt_hint = "/*+ SET_VAR(optimizer_switch='semijoin=off') */ " if pdf_only else ""
+        total = self._cache_manager.get_cached_count(count_key) if count_key else None
         with self._mysql() as conn:
             cur = conn.cursor()
-            count_sql = f"""
-                SELECT COUNT(DISTINCT b.id) AS c FROM std_base b
-                WHERE {where_sql}{pdf_sql}{folder_sql}
-            """
+            if total is None:
+                count_sql = f"""
+                    SELECT {opt_hint}COUNT(DISTINCT b.id) AS c FROM std_base b
+                    WHERE {where_sql}{pdf_sql}{folder_sql}
+                """
+                cur.execute(count_sql, where_args + list(folder_args))
+                total = int(cur.fetchone()["c"])
+                if count_key:
+                    self._cache_manager.set_cached_count(count_key, total)
             search_sql = f"""
-                SELECT DISTINCT b.*, ({score_sql}) AS match_score
+                SELECT {opt_hint}DISTINCT b.*, ({score_sql}) AS match_score
                 FROM std_base b
                 WHERE {where_sql}{pdf_sql}{folder_sql}
                 ORDER BY match_score DESC, b.std_id
                 LIMIT %s OFFSET %s
             """
-            cur.execute(count_sql, where_args + list(folder_args))
-            total = int(cur.fetchone()["c"])
             cur.execute(
                 search_sql,
-                where_args + score_args + list(folder_args) + [per_page, offset],
+                score_args + where_args + list(folder_args) + [per_page, offset],
             )
             rows = list(cur.fetchall())
             items = self._lite_items_mysql(cur, rows, verify_disk=verify_disk)
