@@ -446,6 +446,15 @@ def mysql_keyword_match_order_by(q: str) -> tuple[str, list[Any]]:
             like_pat,
             flex_pat,
         ]
+    else:
+        clean_text = collapse_whitespace(primary)
+        order = (
+            f"CASE "
+            f"WHEN b.std_chinesename = %s THEN 0 "
+            f"WHEN b.std_chinesename LIKE %s THEN 1 "
+            f"ELSE 2 END, b.release_date DESC, b.std_id"
+        )
+        return order, [clean_text, f"{clean_text}%"]
 
 
 def build_ngram_match_clause(q: str, *, param: str = "%s") -> tuple[str, list[Any]]:

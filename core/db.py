@@ -577,11 +577,14 @@ class Database:
 
     def _row_to_lite(self, row: dict, has_pdf: bool) -> dict:
         ex = row.get("ex_state")
+        std_type_no = row.get("std_type_no")
         return {
             "id": row["id"],
             "std_id": row.get("std_id") or "",
             "std_chinesename": row.get("std_chinesename"),
             "std_type": row.get("std_type"),
+            "std_type_no": std_type_no,
+            "std_type_category": std_type_category(std_type_no),
             "std_status": row.get("std_status"),
             "ex_state": ex,
             "ex_state_label": EX_STATE_LABEL.get(ex, row.get("std_status") or "未知"),
