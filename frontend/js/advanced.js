@@ -19,6 +19,7 @@
     unitRank: el("advUnitRank"),
     yearFrom: el("advYearFrom"),
     yearTo: el("advYearTo"),
+    pdfOnly: el("advPdfOnly"),
   };
 
   const selected = new Map();
@@ -191,6 +192,27 @@
         opt.textContent = String(it[labelKey] ?? it[valueKey] ?? "");
       }
       select.appendChild(opt);
+    });
+    if (cur && [...select.options].some(o => o.value === cur)) {
+      select.value = cur;
+    }
+  }
+
+  function fillSelectGrouped(select, groups, placeholder) {
+    if (!select) return;
+    const cur = select.value;
+    select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>`;
+    (groups || []).forEach(g => {
+      if (!g || !Array.isArray(g.types) || g.types.length === 0) return;
+      const og = document.createElement("optgroup");
+      og.label = g.category || g.code || "其他";
+      g.types.forEach(t => {
+        const opt = document.createElement("option");
+        opt.value = t;
+        opt.textContent = t;
+        og.appendChild(opt);
+      });
+      select.appendChild(og);
     });
     if (cur && [...select.options].some(o => o.value === cur)) {
       select.value = cur;
@@ -515,6 +537,7 @@
   }
 
   function appendFilterParams(p) {
+    if (fields.pdfOnly) p.set("pdf_only", fields.pdfOnly.value === "0" ? "0" : "1");
     if (fields.exState?.value) p.set("ex_state", fields.exState.value);
     if (fields.stdType?.value) p.set("std_type", fields.stdType.value);
     if (fields.province?.value) p.set("province", fields.province.value);
@@ -539,7 +562,11 @@
       if (!data.ok) return;
       if (data.provinces && !opts.province && !opts.company_q && !opts.product_q) {
         fillSelect(fields.province, data.provinces, "省（全部）");
-        fillSelect(fields.stdType, data.std_types, "标准类型（全部）");
+        if (data.std_type_groups && data.std_type_groups.length) {
+          fillSelectGrouped(fields.stdType, data.std_type_groups, "标准类型（全部）");
+        } else {
+          fillSelect(fields.stdType, data.std_types, "标准类型（全部）");
+        }
         setProductSuggestions(data.products, null);
         if (fields.exState && fields.exState.options.length <= 1) {
           fillSelect(fields.exState, data.ex_states, "状态（全部）", "value", "label");

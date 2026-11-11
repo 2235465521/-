@@ -175,6 +175,31 @@ def filename_contains_std_id(filename: str, std_id: str) -> bool:
     return False
 
 
+_YEAR_SUFFIX = re.compile(r"[-－—](\d{4})$")
+
+
+def std_base_code(std_id: str) -> str:
+    """从标准号剥离末尾的 -YYYY 年份，得到跨版本可比的「基础编号」。
+
+    例：
+        GB/T 12729.1-1991  ->  GB/T 12729.1
+        GB/T 11991（无年份后缀）->  GB/T 11991
+        DB37/T 1234-2020   ->  DB37/T 1234
+        ISO 9001:2015（冒号年份，不处理）->  ISO 9001:2015
+
+    用途：废止标准查找现行替代版本时，用基础编号在库中定位同族（ex_state=1）标准。
+    注意保留前缀边界（仅剥离末尾的 -YYYY），避免 GB/T 1-1991 与 GB/T 11991 归一后
+    互相混淆。
+    """
+    s = (std_id or "").strip()
+    if not s:
+        return ""
+    m = _YEAR_SUFFIX.search(s)
+    if m:
+        return s[: m.start()]
+    return s
+
+
 def std_id_glob_patterns(std_id: str) -> list[str]:
     """生成磁盘搜索用的通配符（如 JBT 11509 与 JBT11509 两种写法）。"""
     norm = normalize_std_id(std_id)

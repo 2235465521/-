@@ -23,8 +23,10 @@ from core.search_query import (
     mysql_keyword_match_order_by,
 )
 from core.std_normalize import normalize_std_id, std_id_compact_key, std_id_norm_key
+from core.std_type_map import std_type_category
 from core.cache_manager import CacheManager
 from core.pdf_availability import batch_has_pdf_map, pdf_only_exists_sql
+from core.search_filters import build_basic_where
 
 EX_STATE_LABEL = {0: "废止", 1: "现行", 2: "即将实施"}
 
@@ -34,6 +36,7 @@ class StandardInfo:
     id: int
     std_id: str
     std_type: str | None
+    std_type_no: str | None
     std_chinesename: str | None
     std_status: str | None
     ex_state: int | None
@@ -49,6 +52,7 @@ def _row_to_standard(row: dict, files: list[dict]) -> StandardInfo:
         id=row["id"],
         std_id=row["std_id"],
         std_type=row.get("std_type"),
+        std_type_no=row.get("std_type_no"),
         std_chinesename=row.get("std_chinesename"),
         std_status=row.get("std_status"),
         ex_state=ex,
@@ -136,6 +140,46 @@ class Database:
 
     def is_ready(self) -> bool:
         return self._mysql_available() or SQLITE_PATH.is_file()
+
+    def find_replacement(self, std_id: str) -> StandardInfo | None:
+        """按「基础编号」查找现行(ex_state=1)替代版本。找不到返回 None。
+
+        线上库（STSC_standard_database.std_base）没有「代替标准号」字段，废止标准的
+        替代关系只能按 同基础编号 + 现行 来推断：
+            GB/T 12729.1-1991（废止）  ->  GB/T 12729.1-2008（现行）
+        匹配条件：std_id = 基础编号  OR  std_id LIKE 基础编号 + '-%'
+        取 release_date 最新的一条；基础编号由 std_base_code() 计算（仅剥离末尾 -YYYY，
+        保留前缀边界，避免 GB/T 1 与 GB/T 11991 混淆）。
+        """
+        from core.std_normalize import std_base_code
+
+        base = std_base_code(std_id)
+        if not base:
+            return None
+        like_pat = base + "-%"
+        sql = (
+            "SELECT * FROM std_base "
+            "WHERE ex_state = 1 AND (std_id = %s OR std_id LIKE %s) "
+            "ORDER BY release_date DESC, std_id DESC LIMIT 1"
+        )
+        if self._mysql_available():
+            with self._mysql() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, (base, like_pat))
+                row = cur.fetchone()
+                if row:
+                    files = self._fetch_files_mysql(cur, row["id"])
+                    return _row_to_standard(row, files)
+            return None
+        if SQLITE_PATH.is_file():
+            with self._sqlite() as conn:
+                cur = conn.execute(sql.replace("%s", "?"), (base, like_pat))
+                row = cur.fetchone()
+                if row:
+                    d = dict(row)
+                    files = self._fetch_files_sqlite(conn, d["id"])
+                    return _row_to_standard(d, files)
+        return None
 
     def _fetch_files_mysql(self, cur, base_id: int) -> list[dict]:
         cur.execute(
@@ -473,19 +517,19 @@ class Database:
             "has_pdf": has_pdf,
         }
 
-    def list_std_types(self, limit: int = 80) -> list[str]:
+    def list_std_types(self, limit: int | None = None) -> list[str]:
         seen: set[str] = set()
         out: list[str] = []
+        limit_clause = f" LIMIT {int(limit)}" if limit else ""
         if self._mysql_available():
             with self._mysql() as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    """
+                    f"""
                     SELECT DISTINCT std_type FROM std_base
                     WHERE std_type IS NOT NULL AND std_type != ''
-                    ORDER BY std_type LIMIT %s
-                    """,
-                    (limit,),
+                    ORDER BY std_type{limit_clause}
+                    """
                 )
                 for row in cur.fetchall():
                     t = (row.get("std_type") or "").strip()
@@ -495,12 +539,11 @@ class Database:
         elif SQLITE_PATH.is_file():
             with self._sqlite() as conn:
                 cur = conn.execute(
-                    """
+                    f"""
                     SELECT DISTINCT std_type FROM std_base
                     WHERE std_type IS NOT NULL AND std_type != ''
-                    ORDER BY std_type LIMIT ?
-                    """,
-                    (limit,),
+                    ORDER BY std_type{limit_clause}
+                    """
                 )
                 for row in cur.fetchall():
                     t = (dict(row).get("std_type") or "").strip()
@@ -508,6 +551,62 @@ class Database:
                         seen.add(t)
                         out.append(t)
         return out
+
+    def list_std_types_grouped(self) -> list[dict]:
+        """按大类(国家/行业/地方/团体/ISO/IEC)归并 std_type 代号，供前端分组下拉。
+
+        返回 [{"code": "00", "category": "国家标准", "types": ["GB/T", "国标", ...]}, ...]
+        顺序与 STD_TYPE_NO_CATEGORY 一致；空 std_type_no 归入「其他」。
+        """
+        from core.std_type_map import STD_TYPE_NO_CATEGORY, STD_TYPE_UNKNOWN
+
+        buckets: dict[str, list[str]] = {k: [] for k in STD_TYPE_NO_CATEGORY}
+        buckets[STD_TYPE_UNKNOWN] = []
+        order = list(STD_TYPE_NO_CATEGORY.keys()) + [STD_TYPE_UNKNOWN]
+
+        sql = """
+            SELECT std_type_no, std_type, COUNT(*) AS n
+            FROM std_base
+            WHERE std_type IS NOT NULL AND std_type != ''
+            GROUP BY std_type_no, std_type
+            ORDER BY std_type_no, n DESC
+        """
+        rows: list[dict] = []
+        try:
+            if self._mysql_available():
+                with self._mysql() as conn:
+                    cur = conn.cursor()
+                    cur.execute(sql)
+                    rows = cur.fetchall() or []
+            elif SQLITE_PATH.is_file():
+                with self._sqlite() as conn:
+                    cur = conn.execute(sql.replace("%s", "?"))
+                    rows = [dict(r) for r in cur.fetchall()]
+        except Exception:
+            # SQLite 本地索引可能缺少 std_type_no 列，降级为空分组
+            rows = []
+
+        for row in rows:
+            no = (row.get("std_type_no") or "").strip()
+            t = (row.get("std_type") or "").strip()
+            if not t:
+                continue
+            if no in buckets:
+                if t not in buckets[no]:
+                    buckets[no].append(t)
+            else:
+                if t not in buckets[STD_TYPE_UNKNOWN]:
+                    buckets[STD_TYPE_UNKNOWN].append(t)
+
+        return [
+            {
+                "code": no,
+                "category": STD_TYPE_NO_CATEGORY.get(no, no),
+                "types": buckets[no],
+            }
+            for no in order
+            if buckets.get(no)
+        ]
 
     def search_page(
         self,
@@ -1115,6 +1214,7 @@ class Database:
         std_folder: str | None = None,
         primary_keyword: str | None = None,
         verify_disk: bool = False,
+        filters=None,
     ) -> dict:
         kws: list[str] = []
         seen: set[str] = set()
@@ -1130,6 +1230,8 @@ class Database:
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
         primary = (primary_keyword or kws[0]).strip()
+        # 筛选条件必须进缓存键，否则不同条件会命中同一份结果
+        filter_suffix = filters.cache_suffix() if filters is not None and filters.active() else ""
 
         # Cache lookup for product cluster search
         cache_params = {
@@ -1141,6 +1243,7 @@ class Database:
             "pdf_only": pdf_only,
             "std_folder": std_folder,
             "verify_disk": verify_disk,
+            "filters": filter_suffix,
         }
         cache_key = self._cache_manager.make_cache_key(cache_params)
         cached = self._cache_manager.get_cached(cache_key)
@@ -1153,16 +1256,19 @@ class Database:
             "primary": primary,
             "pdf_only": pdf_only,
             "std_folder": std_folder,
+            "filters": filter_suffix,
         }
         count_key = self._cache_manager.make_cache_key(count_params)
 
         if self._mysql_available():
             result = self._search_page_cluster_mysql(
-                kws, primary, page, per_page, offset, pdf_only, std_folder, verify_disk, count_key=count_key
+                kws, primary, page, per_page, offset, pdf_only, std_folder, verify_disk,
+                count_key=count_key, filters=filters,
             )
         else:
             result = self._search_page_cluster_sqlite(
-                kws, primary, page, per_page, offset, pdf_only, std_folder, verify_disk, count_key=count_key
+                kws, primary, page, per_page, offset, pdf_only, std_folder, verify_disk,
+                count_key=count_key, filters=filters,
             )
 
         self._cache_manager.set_cached(cache_key, result)
@@ -1179,6 +1285,7 @@ class Database:
                 "pdf_only": pdf_only,
                 "std_folder": std_folder,
                 "verify_disk": verify_disk,
+                "filters": filter_suffix,
             }
             next_key = self._cache_manager.make_cache_key(next_params)
             if self._cache_manager.get_cached(next_key) is None:
@@ -1186,11 +1293,13 @@ class Database:
                     next_offset = (next_page - 1) * per_page
                     if self._mysql_available():
                         next_res = self._search_page_cluster_mysql(
-                            kws, primary, next_page, per_page, next_offset, pdf_only, std_folder, verify_disk, count_key=count_key
+                            kws, primary, next_page, per_page, next_offset, pdf_only, std_folder, verify_disk,
+                            count_key=count_key, filters=filters,
                         )
                     else:
                         next_res = self._search_page_cluster_sqlite(
-                            kws, primary, next_page, per_page, next_offset, pdf_only, std_folder, verify_disk, count_key=count_key
+                            kws, primary, next_page, per_page, next_offset, pdf_only, std_folder, verify_disk,
+                            count_key=count_key, filters=filters,
                         )
                     self._cache_manager.set_cached(next_key, next_res)
                 threading.Thread(target=_preload, daemon=True).start()
@@ -1231,6 +1340,7 @@ class Database:
         std_folder: str | None,
         verify_disk: bool = False,
         count_key: str | None = None,
+        filters=None,
     ) -> dict:
         if not SQLITE_PATH.is_file():
             return self._empty_page(page, per_page, "product_cluster")
@@ -1238,14 +1348,15 @@ class Database:
         where_sql, where_args = self._cluster_name_where_sql(keywords, False)
         folder_sql, folder_args = self._folder_exists_sql(std_folder)
         pdf_sql = f" AND {pdf_only_exists_sql(mysql=False)}" if pdf_only else ""
+        basic_sql, basic_args = build_basic_where(filters, param="?")
         total = self._cache_manager.get_cached_count(count_key) if count_key else None
         with self._sqlite() as conn:
             if total is None:
                 count_sql = f"""
                     SELECT COUNT(DISTINCT b.id) AS c FROM std_base b
-                    WHERE {where_sql}{pdf_sql}{folder_sql}
+                    WHERE {where_sql}{pdf_sql}{folder_sql}{basic_sql}
                 """
-                count_args = where_args + list(folder_args)
+                count_args = where_args + list(folder_args) + basic_args
                 cur = conn.execute(count_sql, count_args)
                 total = int(cur.fetchone()[0])
                 if count_key:
@@ -1253,13 +1364,13 @@ class Database:
             search_sql = f"""
                 SELECT DISTINCT b.*, ({score_sql}) AS match_score
                 FROM std_base b
-                WHERE {where_sql}{pdf_sql}{folder_sql}
+                WHERE {where_sql}{pdf_sql}{folder_sql}{basic_sql}
                 ORDER BY match_score DESC, b.std_id
                 LIMIT ? OFFSET ?
             """
             cur = conn.execute(
                 search_sql,
-                score_args + where_args + list(folder_args) + [per_page, offset],
+                score_args + where_args + list(folder_args) + basic_args + [per_page, offset],
             )
             rows = [dict(r) for r in cur.fetchall()]
             items = self._lite_items_sqlite(conn, rows, verify_disk=verify_disk)
@@ -1285,6 +1396,7 @@ class Database:
         std_folder: str | None,
         verify_disk: bool = False,
         count_key: str | None = None,
+        filters=None,
     ) -> dict:
         score_sql, score_args = self._cluster_score_sql(keywords, primary, True)
         where_sql, where_args = self._cluster_name_where_sql(keywords, True)
@@ -1292,6 +1404,7 @@ class Database:
         if folder_sql:
             folder_sql = folder_sql.replace("?", "%s")
         pdf_sql = f" AND {pdf_only_exists_sql(mysql=True)}" if pdf_only else ""
+        basic_sql, basic_args = build_basic_where(filters, param="%s")
         opt_hint = "/*+ SET_VAR(optimizer_switch='semijoin=off') */ " if pdf_only else ""
         total = self._cache_manager.get_cached_count(count_key) if count_key else None
         with self._mysql() as conn:
@@ -1299,22 +1412,22 @@ class Database:
             if total is None:
                 count_sql = f"""
                     SELECT {opt_hint}COUNT(DISTINCT b.id) AS c FROM std_base b
-                    WHERE {where_sql}{pdf_sql}{folder_sql}
+                    WHERE {where_sql}{pdf_sql}{folder_sql}{basic_sql}
                 """
-                cur.execute(count_sql, where_args + list(folder_args))
+                cur.execute(count_sql, where_args + list(folder_args) + basic_args)
                 total = int(cur.fetchone()["c"])
                 if count_key:
                     self._cache_manager.set_cached_count(count_key, total)
             search_sql = f"""
                 SELECT {opt_hint}DISTINCT b.*, ({score_sql}) AS match_score
                 FROM std_base b
-                WHERE {where_sql}{pdf_sql}{folder_sql}
+                WHERE {where_sql}{pdf_sql}{folder_sql}{basic_sql}
                 ORDER BY match_score DESC, b.std_id
                 LIMIT %s OFFSET %s
             """
             cur.execute(
                 search_sql,
-                score_args + where_args + list(folder_args) + [per_page, offset],
+                score_args + where_args + list(folder_args) + basic_args + [per_page, offset],
             )
             rows = list(cur.fetchall())
             items = self._lite_items_mysql(cur, rows, verify_disk=verify_disk)

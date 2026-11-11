@@ -456,6 +456,7 @@
           items: parsedItems,
           max_rows: maxRows,
           scan_disk: true,
+          state_policy: document.querySelector('input[name="batchStatePolicy"]:checked')?.value || "all",
         }),
       });
       const data = await res.json();
@@ -521,14 +522,13 @@
       }
     }
 
-    // 复用预览匹配结果：如果已执行过预览，将有效文件的路径与状态随请求一并发送，实现后端 0 毫秒跳过重复检索
+    // 复用预览匹配结果：只回传路径与元数据，ZIP 内文件名一律由后端按当前规则重算
     const enrichedItems = downloadItems.map(it => {
       const prev = previewMap.get(it.row);
       if (prev && prev.status === "ok") {
         return {
           ...it,
           pdf_path: prev.pdf_path,
-          zip_name: prev.zip_name,
           std_id: prev.std_id || it.query,
           std_chinesename: prev.std_chinesename || it.name_hint || "",
           file_name: prev.file_name,
@@ -550,6 +550,7 @@
       }
       fd.append("items", JSON.stringify(enrichedItems));
       fd.append("only_pdf", onlyPdf ? "1" : "0");
+      fd.append("state_policy", document.querySelector('input[name="batchStatePolicy"]:checked')?.value || "all");
       const maxRows = getMaxRowsSetting();
       if (maxRows > 0) {
         fd.append("max_rows", String(maxRows));

@@ -9,6 +9,8 @@ from core.std_normalize import (
     std_id_compact_key,
     std_id_norm_key,
 )
+from config import SEARCH_EXPAND_QUERY
+from core.query_segment import split_chinese_phrase
 
 _STD_FRAGMENT = re.compile(
     r"([A-Za-z]{1,6}(?:\s*/\s*[A-Za-z])?\s*[\d]+(?:\.\d+)*(?:\s*[-－—]\s*\d{2,4})?)",
@@ -142,6 +144,12 @@ def extract_text_keywords(q: str, *, std_ids: list[str] | None = None) -> list[s
 
         for m in _CHINESE_RUN.finditer(source):
             add(m.group(0))
+
+    # 连续中文复合词扩展：把「储能预制舱」拆成「储能」「预制舱」一起参与 OR 召回。
+    # 整词仍排在首位，keyword_match_order_by 会让短语命中的结果排前面。
+    if SEARCH_EXPAND_QUERY:
+        for sub in split_chinese_phrase(chinese_core_text(raw)):
+            add(sub)
 
     rem = collapse_whitespace(remainder)
     if rem:

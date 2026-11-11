@@ -32,8 +32,13 @@ from core.catalog_download import build_zip_from_catalog_ids  # noqa: E402
 from core.geo_download import count_geo_matches, geo_download_status  # noqa: E402
 from core.area_lookup import suggest_companies  # noqa: E402
 from core.db import StandardInfo, db  # noqa: E402
+from core.std_type_map import std_type_category  # noqa: E402
 from core.pdf_discovery import discover_pdfs_on_disk, start_background_scan  # noqa: E402
-from core.pdf_service import collect_files_for_standard, find_pdf_on_disk  # noqa: E402
+from core.pdf_service import (  # noqa: E402
+    collect_files_for_standard,
+    find_pdf_on_disk,
+    pick_pdf_path,
+)
 from core.product_clusters import list_clusters_brief  # noqa: E402
 from core.product_search import product_search  # noqa: E402
 from core.search_query import normalize_search_query
@@ -86,6 +91,8 @@ def _standard_json(std: StandardInfo, *, scan_disk: bool = True) -> dict:
         "id": std.id,
         "std_id": std.std_id,
         "std_type": std.std_type,
+        "std_type_no": std.std_type_no,
+        "std_type_category": std_type_category(std.std_type_no),
         "std_chinesename": std.std_chinesename,
         "std_status": std.std_status,
         "ex_state": std.ex_state,
@@ -120,6 +127,40 @@ def _enrich_items(items: list[dict], *, scan_disk: bool = True) -> list[dict]:
     return out
 
 
+def _mark_downloadable(data: dict, *, std_mode: bool = True) -> dict:
+    """给列表项补 downloadable / download_url，前端只按这个字段决定能否下载。"""
+    for item in data.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        has = bool(item.get("has_pdf") or item.get("has_file"))
+        item["downloadable"] = has
+        if has and std_mode and item.get("id") and not item.get("download_url"):
+            item["download_url"] = f"/api/download/by-std/{item['id']}"
+    return data
+
+
+@app.route("/api/download/by-std/<int:base_id>")
+def api_download_by_std(base_id: int):
+    """按标准 ID 下载 PDF：服务端重新校验磁盘文件，缺文件返回结构化提示。"""
+    std = db.get_by_id(base_id)
+    if not std:
+        return jsonify({"ok": False, "code": "std_not_found", "error": "标准不存在"}), 404
+    files = collect_files_for_standard(std, scan_disk=True)
+    path = pick_pdf_path(std, files, scan_disk=True)
+    if not path or not path.is_file():
+        return jsonify({
+            "ok": False,
+            "code": "pdf_missing",
+            "error": "该标准暂无可下载的 PDF 文件",
+            "std_id": std.std_id,
+            "hint": "索引中有记录但磁盘文件不存在或文件名不匹配，请联系维护人员刷新索引",
+        }), 404
+    dl_name = compose_download_filename(
+        std.std_id, path.name, std_name=std.std_chinesename or ""
+    )
+    return send_file(path, as_attachment=True, download_name=dl_name)
+
+
 @app.route("/api/search")
 def api_search():
     try:
@@ -127,8 +168,9 @@ def api_search():
         src = (request.args.get("source") or "").strip()
         page = max(1, int(request.args.get("page", 1)))
         per_page = min(50, max(1, int(request.args.get("per_page", 10))))
-        scan_disk = request.args.get("scan_disk", "0") != "0"
-        verify_disk = request.args.get("verify_disk", "0") != "0" or scan_disk
+        # 默认校验磁盘：列表的「PDF / 无PDF」必须与点击下载的结果一致
+        scan_disk = request.args.get("scan_disk", "1") != "0"
+        verify_disk = request.args.get("verify_disk", "1") != "0" or scan_disk
         pdf_only = request.args.get("pdf_only", "1") != "0"
         enrich = request.args.get("enrich", "0") == "1"
 
@@ -138,8 +180,17 @@ def api_search():
         if src == "product":
             if not q:
                 return jsonify({"ok": False, "error": "请输入产品名称，如：牙膏"}), 400
+            filters = parse_advanced_filters(request.args)
+            # 地区/单位/顺位/产品条件依赖 units 索引与词库，聚类检索路径暂不支持，明确报错而非静默忽略
+            if any((filters.province, filters.city, filters.county, filters.company,
+                    filters.product, filters.unit_rank, filters.unit_rank_gt3)):
+                return jsonify({
+                    "ok": False,
+                    "error": "同类产品检索暂不支持地区/起草单位/产品筛选，请在标准检索中使用",
+                }), 400
             data = product_search.search_page(
-                q, page=page, per_page=per_page, pdf_only=pdf_only, verify_disk=verify_disk
+                q, page=page, per_page=per_page, pdf_only=pdf_only, verify_disk=verify_disk,
+                filters=filters,
             )
             if data.get("error"):
                 return jsonify({"ok": False, "error": data["error"]}), 400
@@ -147,11 +198,16 @@ def api_search():
                 data["items"] = _enrich_items(
                     data.get("items") or [], scan_disk=scan_disk
                 )
-            return jsonify({"ok": True, "query": q, **data})
+            return jsonify({"ok": True, "query": q, **_mark_downloadable(data)})
 
         if src == "tuangbiao":
             if not q and request.args.get("browse") != "1":
                 return jsonify({"ok": False, "error": "请输入团标名称或协会名关键词"}), 400
+            if any(request.args.get(k) for k in ("ex_state", "std_type", "year_from", "year_to")):
+                return jsonify({
+                    "ok": False,
+                    "error": "团标目录索引不含状态/标准类型/年份字段，暂不支持该筛选",
+                }), 400
             if not tuangbiao.is_ready():
                 return jsonify(
                     {
@@ -165,6 +221,11 @@ def api_search():
         if src == "zhidu":
             if not q:
                 return jsonify({"ok": False, "error": "请输入制度文件名称关键词"}), 400
+            if any(request.args.get(k) for k in ("ex_state", "std_type", "year_from", "year_to")):
+                return jsonify({
+                    "ok": False,
+                    "error": "制度目录索引不含状态/标准类型/年份字段，暂不支持该筛选",
+                }), 400
             if not zhidu.is_ready():
                 return jsonify(
                     {
@@ -185,7 +246,7 @@ def api_search():
                     data["items"] = _enrich_items(
                         data.get("items") or [], scan_disk=scan_disk
                     )
-                return jsonify({"ok": True, "query": "", **data})
+                return jsonify({"ok": True, "query": "", **_mark_downloadable(data)})
             return jsonify({"ok": False, "error": "请输入关键词或设置高级筛选条件"}), 400
 
         from core.unit_geo import geo_index_ready, needs_geo_filter
@@ -224,7 +285,7 @@ def api_search():
             data["items"] = _enrich_items(
                 data.get("items") or [], scan_disk=scan_disk
             )
-        return jsonify({"ok": True, "query": q, **data})
+        return jsonify({"ok": True, "query": q, **_mark_downloadable(data)})
     except ValueError:
         return jsonify({"ok": False, "error": "请求参数无效"}), 400
     except Exception as exc:
@@ -254,6 +315,7 @@ def api_search_filters():
     products = list_clusters_brief()
     payload = filter_options_payload(
         std_types=db.list_std_types() if db.is_ready() else [],
+        std_type_groups=db.list_std_types_grouped() if db.is_ready() else [],
         provinces=area_lookup.list_provinces(),
         cities=area_lookup.list_cities(province) if province else [],
         counties=area_lookup.list_counties(province, city) if province and city else [],
@@ -452,12 +514,21 @@ def api_download_file(file_id: int):
     if found and std_id and not filename_contains_std_id(found.name, std_id):
         found = None
     if not found or not found.is_file():
-        return jsonify({"ok": False, "error": "磁盘上未找到与该标准号匹配的 PDF 文件"}), 404
+        return jsonify({
+            "ok": False,
+            "code": "pdf_missing",
+            "error": "磁盘上未找到与该标准号匹配的 PDF 文件",
+            "std_id": std_id or "",
+            "expected_name": rec.get("file_name") or "",
+            "hint": "索引记录与磁盘文件不一致，请刷新索引或联系维护人员",
+        }), 404
     preview = request.args.get("preview", "0") == "1"
     if preview:
         mime = mimetypes.guess_type(found.name)[0] or "application/pdf"
         return send_file(found, mimetype=mime, as_attachment=False)
-    dl_name = compose_download_filename(std_id or "", found.name)
+    dl_name = compose_download_filename(
+        std_id or "", found.name, std_name=(std.std_chinesename if std else "") or ""
+    )
     return send_file(found, as_attachment=True, download_name=dl_name)
 
 
@@ -472,12 +543,20 @@ def api_download_std_disk(base_id: int, disk_index: int):
         return jsonify({"ok": False, "error": "磁盘文件索引无效"}), 404
     path = Path(disk_files[disk_index]["resolved_path"])
     if not path.is_file():
-        return jsonify({"ok": False, "error": "文件不存在"}), 404
+        return jsonify({
+            "ok": False,
+            "code": "pdf_missing",
+            "error": "文件不存在",
+            "std_id": std.std_id or "",
+            "hint": "磁盘文件已被移动或删除，请刷新索引",
+        }), 404
     preview = request.args.get("preview", "0") == "1"
     if preview:
         mime = mimetypes.guess_type(path.name)[0] or "application/pdf"
         return send_file(path, mimetype=mime, as_attachment=False)
-    dl_name = compose_download_filename(std.std_id or "", path.name)
+    dl_name = compose_download_filename(
+        std.std_id or "", path.name, std_name=std.std_chinesename or ""
+    )
     return send_file(path, as_attachment=True, download_name=dl_name)
 
 
@@ -642,7 +721,10 @@ def api_batch_preview():
             max_rows = int(max_rows)
         except (ValueError, TypeError):
             max_rows = None
-    return jsonify(preview_items(items, max_rows=max_rows, scan_disk=scan_disk))
+    state_policy = (body.get("state_policy") or request.args.get("state_policy") or "all")
+    return jsonify(preview_items(
+        items, max_rows=max_rows, scan_disk=scan_disk, state_policy=state_policy
+    ))
 
 
 @app.route("/api/batch/download", methods=["POST"])
@@ -706,6 +788,11 @@ def api_batch_download():
         original_data=original_data,
         original_filename=original_filename,
         parse_meta=parse_meta,
+        state_policy=(
+            request.form.get("state_policy")
+            or request.args.get("state_policy")
+            or "all"
+        ),
     )
     if summary["success"] < 1:
         return jsonify({"ok": False, "error": "未找到任何可打包的 PDF", "summary": summary}), 404

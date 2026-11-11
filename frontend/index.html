@@ -222,6 +222,13 @@
                 <button type="button" class="year-preset" data-years="10">近10年</button>
               </div>
             </div>
+            <label class="adv-field col-span-2">
+              <span>仅看有 PDF</span>
+              <select id="advPdfOnly">
+                <option value="1" selected>是</option>
+                <option value="0">否（显示全部）</option>
+              </select>
+            </label>
           </div>
           <div class="adv-filter-history" id="advFilterHistory" hidden>
             <span class="adv-history-label">筛选记录（点击复用）</span>
@@ -431,6 +438,18 @@ DL/T 5161.1-2018 电气装置安装</code></pre>
                   <label class="batch-radio-opt">
                     <input type="radio" name="batchDlScope" value="selected" />
                     已勾选项 (<span id="cntDlSelected">0</span>)
+                  </label>
+                </div>
+                <div class="batch-scope-selector">
+                  <span class="opts-label">标准状态：</span>
+                  <label class="batch-radio-opt">
+                    <input type="radio" name="batchStatePolicy" value="all" checked /> 全部
+                  </label>
+                  <label class="batch-radio-opt">
+                    <input type="radio" name="batchStatePolicy" value="current_only" /> 仅现行
+                  </label>
+                  <label class="batch-radio-opt" title="废止标准尝试替换为现行版本，并在清单中给出说明">
+                    <input type="radio" name="batchStatePolicy" value="replace_deprecated" /> 废止替换最新版
                   </label>
                 </div>
                 <div class="batch-select-btns">

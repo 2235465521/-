@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from core.db import db
+from core.db import EX_STATE_LABEL, db
 from core.pdf_discovery import discover_pdfs_on_disk, check_file_exists_in_cache
 from core.pdf_service import collect_files_for_standard, pick_pdf_path
 from core.std_normalize import normalize_std_id
@@ -324,7 +324,25 @@ def parse_text(text: str, *, max_rows: int | None = None) -> dict[str, Any]:
     return {"ok": True, "items": items, "meta": meta}
 
 
-def resolve_item(query: str, *, scan_disk: bool = True) -> dict[str, Any]:
+def _find_latest_replacement(std):
+    """废止标准 → 现行替代版本解析器。
+
+    线上库（STSC_standard_database.std_base）无「代替标准号」字段，改用「同基础编号 +
+    现行(ex_state=1)」推断：在标准库中按基础编号查找最新现行版本。找不到现行替代时返回
+    None，调用方保留废止原件并在结果清单中标注「请人工复核」。
+    """
+    if std is None or std.ex_state != 0:
+        return None
+    return db.find_replacement(std.std_id)
+
+
+def resolve_item(
+    query: str,
+    *,
+    scan_disk: bool = True,
+    name_hint: str = "",
+    state_policy: str = "all",
+) -> dict[str, Any]:
     q = (query or "").strip()
     if not q:
         return {"status": "empty", "query": q, "message": "空行"}
@@ -346,15 +364,39 @@ def resolve_item(query: str, *, scan_disk: bool = True) -> dict[str, Any]:
                     "status": "ok",
                     "query": q,
                     "std_id": q,
-                    "std_chinesename": "",
+                    "std_chinesename": name_hint or "",
                     "base_id": None,
                     "file_name": pdf_path.name,
-                    "zip_name": _safe_zip_name(q, pdf_path.name),
+                    "zip_name": _safe_zip_name(q, pdf_path.name, std_name=name_hint),
                     "pdf_path": str(pdf_path),
                     "file_size": pdf_path.stat().st_size,
                     "source": "disk_only",
+                    "state_label": "",
+                    "state_note": "",
                 }
         return {"status": "not_found", "query": q, "message": "未找到匹配标准"}
+
+    state_label = EX_STATE_LABEL.get(std.ex_state, "未知")
+    state_note = ""
+    if state_policy == "current_only" and std.ex_state != 1:
+        return {
+            "status": "skipped",
+            "query": q,
+            "std_id": std.std_id,
+            "std_chinesename": std.std_chinesename,
+            "base_id": std.id,
+            "state_label": state_label,
+            "state_note": "非现行标准，按「仅下载现行」策略跳过",
+            "message": "非现行标准，按「仅下载现行」策略跳过",
+        }
+    if state_policy == "replace_deprecated" and std.ex_state == 0:
+        replacement = _find_latest_replacement(std)
+        if replacement is not None:
+            std = replacement
+            state_label = EX_STATE_LABEL.get(std.ex_state, "未知")
+            state_note = f"原标准废止，已替换为 {std.std_id}"
+        else:
+            state_note = "未找到现行替代版本，保留废止原件，请人工复核"
 
     files = collect_files_for_standard(std, scan_disk=scan_disk)
     pdf_path = pick_pdf_path(std, files, scan_disk=scan_disk)
@@ -369,10 +411,14 @@ def resolve_item(query: str, *, scan_disk: bool = True) -> dict[str, Any]:
             "std_id": std.std_id,
             "std_chinesename": std.std_chinesename,
             "base_id": std.id,
+            "state_label": state_label,
+            "state_note": state_note,
             "message": "已匹配标准但未找到 PDF",
         }
 
-    zip_name = _safe_zip_name(std.std_id, pdf_path.name)
+    zip_name = _safe_zip_name(
+        std.std_id, pdf_path.name, std_name=std.std_chinesename or ""
+    )
     return {
         "status": "ok",
         "query": q,
@@ -384,41 +430,93 @@ def resolve_item(query: str, *, scan_disk: bool = True) -> dict[str, Any]:
         "zip_name": zip_name,
         "pdf_path": str(pdf_path),
         "file_size": pdf_path.stat().st_size if pdf_path.is_file() else None,
+        "state_label": state_label,
+        "state_note": state_note,
     }
 
 
-def resolve_item_cached(item: dict | str, *, scan_disk: bool = True) -> dict[str, Any]:
-    if isinstance(item, str):
-        return resolve_item(item, scan_disk=scan_disk)
-    
-    pdf_path_str = item.get("pdf_path")
-    if pdf_path_str and item.get("status") == "ok":
-        pdf_path = Path(pdf_path_str)
-        if check_file_exists_in_cache(pdf_path):
-            res = dict(item)
-            return res
-
-    query = (item.get("query") or "").strip()
-    res = resolve_item(query, scan_disk=scan_disk)
-    if item.get("row") is not None:
-        res["row"] = item.get("row")
+def _recomputed_zip_name(res: dict[str, Any]) -> dict[str, Any]:
+    """服务端统一重算 ZIP 内文件名，不信任前端/预览缓存带回的 zip_name。"""
+    if res.get("status") == "ok":
+        res["zip_name"] = _safe_zip_name(
+            res.get("std_id") or res.get("query") or "",
+            res.get("file_name") or res.get("pdf_name") or "",
+            std_name=res.get("std_chinesename") or "",
+        )
     return res
 
 
-def compose_download_filename(std_id: str, original: str) -> str:
-    """下载/ZIP 内文件名：标准号 + 原 PDF 文件名（净化非法字符）。"""
-    sid = (std_id or "").strip()
-    sid_compact = sid.replace("／", "/").replace("/", "").replace(" ", "")
-    sid_safe = re.sub(r'[<>:"\\|?*\x00-\x1f]', "_", sid_compact)[:80] or "unknown"
-    orig_name = Path((original or "").replace("\\", "/")).name.strip()
-    name_safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", orig_name)[:200]
-    if not name_safe:
-        name_safe = "document.pdf"
-    return f"{sid_safe}_{name_safe}"
+def resolve_item_cached(
+    item: dict | str, *, scan_disk: bool = True, state_policy: str = "all"
+) -> dict[str, Any]:
+    if isinstance(item, str):
+        return _recomputed_zip_name(
+            resolve_item(item, scan_disk=scan_disk, state_policy=state_policy)
+        )
+    
+    pdf_path_str = item.get("pdf_path")
+    # 启用状态策略时，旧预览缓存没有状态字段，必须重新解析而不是直接复用
+    cache_usable = state_policy == "all" or bool(item.get("state_label"))
+    if pdf_path_str and item.get("status") == "ok" and cache_usable:
+        pdf_path = Path(pdf_path_str)
+        if check_file_exists_in_cache(pdf_path):
+            res = dict(item)
+            if not res.get("std_chinesename") and item.get("name_hint"):
+                res["std_chinesename"] = item["name_hint"]
+            return _recomputed_zip_name(res)
+
+    query = (item.get("query") or "").strip()
+    res = resolve_item(
+        query,
+        scan_disk=scan_disk,
+        name_hint=(item.get("name_hint") or item.get("std_chinesename") or ""),
+        state_policy=state_policy,
+    )
+    if item.get("row") is not None:
+        res["row"] = item.get("row")
+    return _recomputed_zip_name(res)
 
 
-def _safe_zip_name(std_id: str, original: str) -> str:
-    return compose_download_filename(std_id, original)
+# 磁盘文件名里的「标准号 / 中文题名」分隔标记，如 GBT 29647-2013_F_坚果…
+_MARKER_SPLIT_RE = re.compile(r"(?:^|_)[FTZX]_", re.IGNORECASE)
+_ILLEGAL_NAME_RE = re.compile(r'[<>:"\\|?*\x00-\x1f]')
+# Windows 单文件名上限，留出序号前缀与扩展名的余量
+_MAX_NAME_PART = 110
+
+
+def _clean_name_part(text: str, limit: int) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    cleaned = _ILLEGAL_NAME_RE.sub("_", cleaned).strip(" ._")
+    return cleaned[:limit].rstrip(" ._")
+
+
+def strip_filename_markers(original: str) -> str:
+    """返回原 PDF 文件名中标记之后的中文题名（无标记时返回去扩展名的原名）。"""
+    name = Path((original or "").replace("\\", "/")).name.strip()
+    stem = Path(name).stem
+    parts = _MARKER_SPLIT_RE.split(stem)
+    title = parts[-1].strip() if parts else ""
+    return _clean_name_part(title or stem, _MAX_NAME_PART)
+
+
+def compose_download_filename(std_id: str, original: str, *, std_name: str = "") -> str:
+    """下载/ZIP 内文件名：标准号_标准中文名.pdf。
+
+    不再继承原 PDF 文件名，避免把 _F_ 标记与历史版本编号带进成品文件名。
+    库中无标准名时退化为「标记之后的中文题名」，再退化为净化后的原文件名。
+    """
+    sid = _clean_name_part(
+        (std_id or "").replace("／", "/").replace("/", "").replace(" ", ""), 80
+    ) or "unknown"
+    title = _clean_name_part(std_name, _MAX_NAME_PART) or strip_filename_markers(original)
+    title = title or _clean_name_part(Path((original or "").replace("\\", "/")).name, _MAX_NAME_PART)
+    if not title:
+        title = "document"
+    return f"{sid}_{title}.pdf"
+
+
+def _safe_zip_name(std_id: str, original: str, *, std_name: str = "") -> str:
+    return compose_download_filename(std_id, original, std_name=std_name)
 
 
 def _unique_name(used: set[str], name: str) -> str:
@@ -584,16 +682,20 @@ def build_result_excel(results: list[dict]) -> tuple[bytes, str]:
     body_font = Font(name="Microsoft YaHei", size=10, color="334155")
     header_fill = PatternFill("solid", fgColor="EFF6FF")
 
-    headers = ["序号", "标准号", "标准名称", "下载状态", "备注"]
+    headers = ["序号", "标准号", "标准名称", "标准状态", "下载状态", "备注", "替换说明"]
     ws.append(headers)
     for r in results:
-        status_label = "成功" if r.get("status") == "ok" else "未找到/无PDF"
+        status_label = {"ok": "成功", "skipped": "已跳过"}.get(
+            r.get("status"), "未找到/无PDF"
+        )
         ws.append([
             r.get("row") or "",
             r.get("std_id") or r.get("query") or "",
-            r.get("std_name") or r.get("name_hint") or "",
+            r.get("std_chinesename") or r.get("std_name") or r.get("name_hint") or "",
+            r.get("state_label") or "",
             status_label,
             "" if r.get("status") == "ok" else "否",
+            r.get("state_note") or r.get("message") or "",
         ])
 
     for row in ws.iter_rows(min_row=1, max_row=1):
@@ -610,8 +712,10 @@ def build_result_excel(results: list[dict]) -> tuple[bytes, str]:
     ws.column_dimensions["A"].width = 8
     ws.column_dimensions["B"].width = 24
     ws.column_dimensions["C"].width = 38
-    ws.column_dimensions["D"].width = 14
-    ws.column_dimensions["E"].width = 12
+    ws.column_dimensions["D"].width = 12
+    ws.column_dimensions["E"].width = 14
+    ws.column_dimensions["F"].width = 12
+    ws.column_dimensions["G"].width = 42
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -627,6 +731,7 @@ def build_zip_archive(
     original_data: bytes | None = None,
     original_filename: str | None = None,
     parse_meta: dict[str, Any] | None = None,
+    state_policy: str = "all",
 ) -> tuple[io.BytesIO, dict[str, Any]]:
     buf = io.BytesIO()
     used_names: set[str] = set()
@@ -636,7 +741,7 @@ def build_zip_archive(
     # 1. 使用多线程 ThreadPoolExecutor 并发解析与匹配条目 (如果前端已预览过直接缓存命中)
     def _proc(arg):
         idx, item = arg
-        res = resolve_item_cached(item, scan_disk=scan_disk)
+        res = resolve_item_cached(item, scan_disk=scan_disk, state_policy=state_policy)
         if not res.get("row"):
             res["row"] = item.get("row") or idx
         return idx, res
@@ -666,7 +771,15 @@ def build_zip_archive(
                     results.append(resolved)
                 continue
             prefix = f"{row_no:03d}_"
-            entry_name = _unique_name(used_names, prefix + resolved["zip_name"])
+            # 文件名一律由服务端按当前规则生成，杜绝旧预览结果的命名被带进 ZIP
+            entry_name = _unique_name(
+                used_names,
+                prefix + _safe_zip_name(
+                    resolved.get("std_id") or resolved.get("query") or "",
+                    resolved.get("file_name") or resolved.get("pdf_name") or "",
+                    std_name=resolved.get("std_chinesename") or "",
+                ),
+            )
             try:
                 # PDF 内部已有压缩，使用 STORED 直存写入，提升百倍打包吞吐
                 zf.write(pdf_path, arcname=f"PDF/{entry_name}", compress_type=zipfile.ZIP_STORED)
@@ -802,7 +915,11 @@ def build_zip_from_base_ids(
 
 
 def preview_items(
-    items: list[dict], *, max_rows: int | None = None, scan_disk: bool = False
+    items: list[dict],
+    *,
+    max_rows: int | None = None,
+    scan_disk: bool = False,
+    state_policy: str = "all",
 ) -> dict[str, Any]:
     effective_limit = max_rows if max_rows is not None else DEFAULT_MAX_ROWS
     if effective_limit is not None and effective_limit > 0:
@@ -815,7 +932,10 @@ def preview_items(
 
     max_workers = min(32, max(1, len(target_items)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        rows = list(executor.map(lambda item: resolve_item_cached(item, scan_disk=scan_disk), target_items))
+        rows = list(executor.map(
+            lambda item: resolve_item_cached(item, scan_disk=scan_disk, state_policy=state_policy),
+            target_items,
+        ))
 
     ok = sum(1 for r in rows if r.get("status") == "ok")
     return {

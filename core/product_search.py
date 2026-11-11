@@ -38,6 +38,7 @@ class ProductSearch:
         pdf_only: bool = True,
         std_folder: str | None = None,
         verify_disk: bool = False,
+        filters=None,
     ) -> dict:
         if not self.is_ready():
             return {"error": "标准库未就绪，请先运行 python scripts/build_index.py"}
@@ -54,6 +55,7 @@ class ProductSearch:
             std_folder=std_folder,
             primary_keyword=primary,
             verify_disk=verify_disk,
+            filters=filters,
         )
         return {
             **data,

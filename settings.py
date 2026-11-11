@@ -28,6 +28,9 @@ CACHE_TTL_SUGGEST = int(os.getenv("CACHE_TTL_SUGGEST", "600"))
 CACHE_TTL_DETAIL = int(os.getenv("CACHE_TTL_DETAIL", "7200"))
 CACHE_TTL_DISK = int(os.getenv("CACHE_TTL_DISK", "86400"))
 
+# 中文复合词扩展召回（储能预制舱 → 储能 + 预制舱），关闭后回到整词精确匹配
+SEARCH_EXPAND_QUERY = os.getenv("SEARCH_EXPAND_QUERY", "true").lower() in ("1", "true", "yes")
+
 ES_ENABLED = os.getenv("ES_ENABLED", "auto").lower()
 ES_SCHEME = os.getenv("ES_SCHEME", "http")
 ES_HOST = os.getenv("ES_HOST", "127.0.0.1")

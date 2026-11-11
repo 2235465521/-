@@ -2764,10 +2764,13 @@
     }
     .results-table .col-check { width: 3rem; text-align: center; }
     .results-table .col-code { width: 12%; min-width: 9.5rem; }
-    .results-table .col-name { width: 46%; }
+    .results-table .col-name { width: 38%; }
+    .results-table .col-type { width: 9rem; }
     .results-table .col-date { width: 7.5rem; }
     .results-table .col-status { width: 9.5rem; }
     .results-table .col-action { width: 3.5rem; text-align: center; }
+    .results-table .type-cat { font-weight: 600; font-size: 0.82rem; }
+    .results-table .type-sub { display: block; font-size: 0.72rem; color: var(--muted); margin-top: 0.15rem; }
     .results-table td.col-date {
       white-space: nowrap;
       font-family: ui-monospace, monospace;

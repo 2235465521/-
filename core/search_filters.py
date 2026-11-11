@@ -234,6 +234,7 @@ def filter_options_payload(
     products: list[dict],
     companies: list[str],
     product_suggestions: list[str] | None = None,
+    std_type_groups: list[dict] | None = None,
 ) -> dict:
     payload = {
         "ex_states": [
@@ -250,4 +251,45 @@ def filter_options_payload(
     }
     if product_suggestions is not None:
         payload["product_suggestions"] = product_suggestions
+    if std_type_groups is not None:
+        payload["std_type_groups"] = std_type_groups
     return payload
+
+
+def build_basic_where(filters: AdvancedFilters | None, *, param: str = "?") -> tuple[str, list[Any]]:
+    """仅依赖 std_base 自身字段的筛选，可安全复用于同类产品等其它检索来源。
+
+    不处理省/市/县、起草单位、顺位、产品词等条件——那些需要 units 索引或词库，
+    调用方应在入口处明确拦截，避免静默忽略用户条件。
+    """
+    if filters is None or not filters.active():
+        return "", []
+    clauses: list[str] = []
+    args: list[Any] = []
+
+    if filters.ex_states:
+        placeholders = ",".join(param for _ in filters.ex_states)
+        clauses.append(f"b.ex_state IN ({placeholders})")
+        args.extend(filters.ex_states)
+
+    if filters.std_type:
+        clauses.append(f"b.std_type LIKE {param}")
+        args.append(f"%{filters.std_type}%")
+
+    cast_type = "SIGNED" if param == "%s" else "INTEGER"
+    if filters.year_from is not None:
+        clauses.append(
+            f"(CAST(substr(b.release_date, 1, 4) AS {cast_type}) >= {param} "
+            f"OR CAST(substr(b.std_id, -4) AS {cast_type}) >= {param})"
+        )
+        args.extend([filters.year_from, filters.year_from])
+    if filters.year_to is not None:
+        clauses.append(
+            f"(CAST(substr(b.release_date, 1, 4) AS {cast_type}) <= {param} "
+            f"OR CAST(substr(b.std_id, -4) AS {cast_type}) <= {param})"
+        )
+        args.extend([filters.year_to, filters.year_to])
+
+    if not clauses:
+        return "", []
+    return " AND " + " AND ".join(clauses), args

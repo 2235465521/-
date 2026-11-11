@@ -335,11 +335,13 @@
       bulkScan.hidden = mode === "tuangbiao";
     }
     if (searchHint) searchHint.hidden = mode !== "search";
+    // 标准检索与同类产品共用同一套状态/类型/年份筛选；团标/制度索引无这些字段
+    const filterable = mode === "search" || mode === "product";
     if (btnAdvanced) {
-      btnAdvanced.style.display = mode === "search" ? "" : "none";
+      btnAdvanced.style.display = filterable ? "" : "none";
     }
     if (advancedPanel) {
-      if (mode !== "search") {
+      if (!filterable) {
         advancedPanel.hidden = true;
         btnAdvanced?.classList.remove("active");
       } else if (!btnAdvanced?.classList.contains("active")) {
@@ -452,6 +454,9 @@
     if (currentMode === "tuangbiao") {
       return item.has_pdf || item.has_file ? `/api/tuangbiao/${item.id}/download` : null;
     }
+    // 后端已按磁盘实际文件判定并给出可直接下载的链接（列表默认不带 files）
+    if (item.downloadable === false) return null;
+    if (item.download_url) return item.download_url;
     const files = (item.files || []).filter(f => f.exists);
     if (!files.length) return null;
     const f = files[0];
@@ -647,11 +652,13 @@
     html += `<div class="results-table-meta">显示 ${from} 至 ${to} 项，共 ${data.total} 项</div>`;
     html += `<div class="table-wrap"><table class="results-table"><thead><tr>`;
     if (canBulk) html += `<th class="col-check"><input type="checkbox" id="tblSelectPageHint" disabled aria-hidden="true" style="visibility:hidden" /></th>`;
-    html += `<th class="col-code">标准编号</th><th class="col-name">标准名称</th><th class="col-date">发布日期</th><th class="col-status">状态</th><th class="col-action">操作</th></tr></thead><tbody>`;
+    html += `<th class="col-code">标准编号</th><th class="col-name">标准名称</th><th class="col-type">类型</th><th class="col-date">发布日期</th><th class="col-status">状态</th><th class="col-action">操作</th></tr></thead><tbody>`;
 
     html += items
       .map(item => {
-        const hasFile = item.has_pdf || item.has_file || isCatalogMode(currentMode);
+        const hasFile = item.downloadable !== undefined
+          ? item.downloadable
+          : (item.has_pdf || item.has_file || isCatalogMode(currentMode));
         const bulkChecked = window.AdvancedUI?.isSelected?.(item.id) ? " checked" : "";
         const bulkDisabled = hasFile ? "" : " disabled";
         const statusLabel = item.ex_state_label || item.std_status || "—";
@@ -664,6 +671,7 @@
             ${checkCell}
             <td class="col-code"><span class="cell-code">${escapeHtml(item.std_id || "—")}</span></td>
             <td class="col-name"><span class="cell-name">${escapeHtml(item.std_chinesename || "（无名称）")}</span></td>
+            <td class="col-type"><span class="type-cat">${escapeHtml(item.std_type_category || "—")}</span>${item.std_type ? `<span class="type-sub">${escapeHtml(item.std_type)}</span>` : ""}</td>
             <td class="col-date">${escapeHtml(formatReleaseDate(item.release_date))}</td>
             <td class="col-status">
               <span class="status-pill ${statusPillClass(statusLabel)}">${escapeHtml(statusLabel)}</span>
@@ -671,13 +679,13 @@
             </td>
             <td class="col-action">
               ${dlHref
-            ? `<a class="btn-row-dl" href="${dlHref}" download title="下载" onclick="event.stopPropagation()">↓</a>`
+            ? `<a class="btn-row-dl" data-dl="1" href="${dlHref}" download title="下载" onclick="event.stopPropagation()">↓</a>`
             : `<span class="btn-row-dl disabled">↓</span>`
           }
             </td>
           </tr>
           <tr class="result-detail-row" data-for="${item.id}" style="display:none">
-            <td colspan="${canBulk ? 6 : 5}"><div class="detail-placeholder">展开此行加载 PDF 文件列表</div></td>
+            <td colspan="${canBulk ? 7 : 6}"><div class="detail-placeholder">展开此行加载 PDF 文件列表</div></td>
           </tr>`;
       })
       .join("");
@@ -751,6 +759,19 @@
                   } else {
                     chk.setAttribute("disabled", "true");
                     chk.checked = false;
+                  }
+                }
+                // 磁盘校验结果同步到下载按钮，避免「显示 PDF 但点了报文件不存在」
+                const dl = tr.querySelector(".btn-row-dl[data-dl]");
+                if (dl) {
+                  if (hasPdf) {
+                    dl.classList.remove("disabled");
+                    if (!dl.getAttribute("href")) {
+                      dl.setAttribute("href", `/api/download/by-std/${id}`);
+                    }
+                  } else {
+                    dl.classList.add("disabled");
+                    dl.removeAttribute("href");
                   }
                 }
               }
@@ -919,7 +940,9 @@
       params.set("source", "product");
     } else if (isCatalogMode(currentMode)) {
       params.set("source", currentMode);
-    } else if (advActive && window.AdvancedUI?.filterQuery) {
+    }
+    // 筛选参数对标准检索与同类产品都生效；团标/制度索引无这些字段，不发送
+    if (advActive && window.AdvancedUI?.filterQuery && !isCatalogMode(currentMode)) {
       if (window.AdvancedUI.validateRankFilter && !window.AdvancedUI.validateRankFilter()) {
         if (!isPreload && btnSearch) btnSearch.disabled = false;
         return;
