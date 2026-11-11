@@ -446,12 +446,61 @@ def mysql_keyword_match_order_by(q: str) -> tuple[str, list[Any]]:
             like_pat,
             flex_pat,
         ]
-    else:
-        clean_text = collapse_whitespace(primary)
-        order = (
-            f"CASE "
-            f"WHEN b.std_chinesename = %s THEN 0 "
-            f"WHEN b.std_chinesename LIKE %s THEN 1 "
-            f"ELSE 2 END, b.release_date DESC, b.std_id"
-        )
-        return order, [clean_text, f"{clean_text}%"]
+
+
+def build_ngram_match_clause(q: str, *, param: str = "%s") -> tuple[str, list[Any]]:
+    """ngram 全文索引匹配片段（须先执行 scripts/ngram_fulltext.sql 建索引）。
+
+    - 标准号仍用原有精确/变体匹配（ngram 仅覆盖 std_chinesename）。
+    - 中文文本用 MATCH...AGAINST(BOOLEAN MODE)，多个子词用 OR 召回以保留召回率；
+      单字关键词（ngram token_size=2 无法分词）会被跳过以免空召回。
+    """
+    q = (q or "").strip()
+    if not q:
+        return "", []
+    intent = parse_search_intent(q)
+    parts: list[str] = []
+    args: list[Any] = []
+
+    std_targets = intent.std_ids or ([intent.cleaned] if looks_like_std_id(intent.cleaned) else [])
+    for std_q in std_targets[:3]:
+        _append_std_id_match(parts, args, std_q, param=param, use_std_id_norm=True)
+
+    text_kws = split_chinese_phrase(chinese_core_text(q))
+    seen: set[str] = set()
+    for kw in text_kws:
+        kw = collapse_whitespace(kw)
+        if len(kw) < 2:
+            continue
+        if looks_like_std_id(kw):
+            continue
+        key = kw.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        parts.append(f"MATCH(b.std_chinesename) AGAINST ({param} IN BOOLEAN MODE)")
+        args.append(kw)
+        if len(parts) >= 8:
+            break
+
+    if not parts:
+        return "", []
+    return "(" + " OR ".join(parts) + ")", args
+
+
+def mysql_ngram_order_by(q: str) -> tuple[str, list[Any]]:
+    """ngram 相关度排序：标准号查询沿用原规则，中文查询按全文相关度降序。"""
+    intent = parse_search_intent(q)
+    primary = intent.primary or q
+    if not primary:
+        return "b.std_id", []
+    if looks_like_std_id(primary):
+        return mysql_keyword_match_order_by(q)
+    clean_text = collapse_whitespace(primary)
+    order = (
+        f"MATCH(b.std_chinesename) AGAINST ({clean_text} IN NATURAL LANGUAGE MODE) DESC, "
+        f"b.release_date DESC, b.std_id"
+    )
+    return order, []
+
+

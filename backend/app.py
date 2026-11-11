@@ -147,6 +147,15 @@ def api_download_by_std(base_id: int):
         return jsonify({"ok": False, "code": "std_not_found", "error": "标准不存在"}), 404
     files = collect_files_for_standard(std, scan_disk=True)
     path = pick_pdf_path(std, files, scan_disk=True)
+    # 「部分下载旧版」兜底：请求版本无 PDF 时，回退到同号最新版本（优先现行）。
+    fallback_note = ""
+    if not path or not path.is_file():
+        latest = db.resolve_latest_version(std.std_id)
+        if latest and latest.id != std.id:
+            files2 = collect_files_for_standard(latest, scan_disk=True)
+            path2 = pick_pdf_path(latest, files2, scan_disk=True)
+            if path2 and path2.is_file():
+                std, path, fallback_note = latest, path2, f"原版本无 PDF，已取最新版本 {latest.std_id}"
     if not path or not path.is_file():
         return jsonify({
             "ok": False,
@@ -158,7 +167,12 @@ def api_download_by_std(base_id: int):
     dl_name = compose_download_filename(
         std.std_id, path.name, std_name=std.std_chinesename or ""
     )
-    return send_file(path, as_attachment=True, download_name=dl_name)
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name=dl_name,
+        max_age=0,
+    )
 
 
 @app.route("/api/search")
@@ -203,10 +217,16 @@ def api_search():
         if src == "tuangbiao":
             if not q and request.args.get("browse") != "1":
                 return jsonify({"ok": False, "error": "请输入团标名称或协会名关键词"}), 400
-            if any(request.args.get(k) for k in ("ex_state", "std_type", "year_from", "year_to")):
+            ex_state = request.args.get("ex_state")
+            if ex_state is not None and not tuangbiao.has_status_column():
                 return jsonify({
                     "ok": False,
-                    "error": "团标目录索引不含状态/标准类型/年份字段，暂不支持该筛选",
+                    "error": "团标目录索引未包含状态字段，暂不支持按现行/废止筛选（需重建索引并提供状态数据）",
+                }), 400
+            if any(request.args.get(k) for k in ("std_type", "year_from", "year_to")):
+                return jsonify({
+                    "ok": False,
+                    "error": "团标目录索引不含标准类型/年份字段，暂不支持该筛选",
                 }), 400
             if not tuangbiao.is_ready():
                 return jsonify(
@@ -215,16 +235,23 @@ def api_search():
                         "error": "团标索引未就绪，请运行 scripts/build_tuangbiao_index.py",
                     }
                 ), 503
-            data = tuangbiao.search_page(q, page=page, per_page=per_page)
+            ex_state_val = int(ex_state) if ex_state not in (None, "") else None
+            data = tuangbiao.search_page(q, page=page, per_page=per_page, ex_state=ex_state_val)
             return jsonify({"ok": True, "query": q, **data})
 
         if src == "zhidu":
             if not q:
                 return jsonify({"ok": False, "error": "请输入制度文件名称关键词"}), 400
-            if any(request.args.get(k) for k in ("ex_state", "std_type", "year_from", "year_to")):
+            ex_state = request.args.get("ex_state")
+            if ex_state is not None and not zhidu.has_status_column():
                 return jsonify({
                     "ok": False,
-                    "error": "制度目录索引不含状态/标准类型/年份字段，暂不支持该筛选",
+                    "error": "制度目录索引未包含状态字段，暂不支持按现行/废止筛选（需重建索引并提供状态数据）",
+                }), 400
+            if any(request.args.get(k) for k in ("std_type", "year_from", "year_to")):
+                return jsonify({
+                    "ok": False,
+                    "error": "制度目录索引不含标准类型/年份字段，暂不支持该筛选",
                 }), 400
             if not zhidu.is_ready():
                 return jsonify(
@@ -233,7 +260,8 @@ def api_search():
                         "error": "制度索引未就绪，请运行 scripts/build_zhidu_index.py",
                     }
                 ), 503
-            data = zhidu.search_page(q, page=page, per_page=per_page)
+            ex_state_val = int(ex_state) if ex_state not in (None, "") else None
+            data = zhidu.search_page(q, page=page, per_page=per_page, ex_state=ex_state_val)
             return jsonify({"ok": True, "query": q, **data})
 
         filters = parse_advanced_filters(request.args)

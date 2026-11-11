@@ -17,10 +17,13 @@ from config import (
     MYSQL_USER,
     SQLITE_PATH,
 )
+from settings import SEARCH_USE_NGRAM
 from core.search_query import (
     build_keyword_match_clause,
+    build_ngram_match_clause,
     keyword_match_order_by,
     mysql_keyword_match_order_by,
+    mysql_ngram_order_by,
 )
 from core.std_normalize import normalize_std_id, std_id_compact_key, std_id_norm_key
 from core.std_type_map import std_type_category
@@ -180,6 +183,76 @@ class Database:
                     files = self._fetch_files_sqlite(conn, d["id"])
                     return _row_to_standard(d, files)
         return None
+
+    def resolve_latest_version(self, std_id: str) -> StandardInfo | None:
+        """按「基础编号」取同号最新版本（解决「部分下载旧版」问题）。
+
+        匹配条件与 find_replacement 一致（std_id = 基础编号 OR std_id LIKE 基础编号 + '-%'），
+        但不再限定 ex_state=1，而是优先返回「现行(ex_state=1)」，其次按 release_date 倒序取最新。
+        适用于下载兜底：当请求版本无 PDF 而同号存在更新版本时，回退到最新版本。
+        """
+        from core.std_normalize import std_base_code
+
+        base = std_base_code(std_id)
+        if not base:
+            return None
+        like_pat = base + "-%"
+        mysql_order = "(ex_state = 1) DESC, release_date IS NULL ASC, release_date DESC, std_id DESC"
+        sqlite_order = (
+            "CASE WHEN ex_state = 1 THEN 0 ELSE 1 END, "
+            "CASE WHEN release_date IS NULL THEN 1 ELSE 0 END, "
+            "release_date DESC, std_id DESC"
+        )
+        if self._mysql_available():
+            with self._mysql() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    f"SELECT * FROM std_base "
+                    f"WHERE std_id = %s OR std_id LIKE %s "
+                    f"ORDER BY {mysql_order} LIMIT 1",
+                    (base, like_pat),
+                )
+                row = cur.fetchone()
+                if row:
+                    files = self._fetch_files_mysql(cur, row["id"])
+                    return _row_to_standard(row, files)
+            return None
+        if SQLITE_PATH.is_file():
+            with self._sqlite() as conn:
+                cur = conn.execute(
+                    f"SELECT * FROM std_base "
+                    f"WHERE std_id = ? OR std_id LIKE ? "
+                    f"ORDER BY {sqlite_order} LIMIT 1",
+                    (base, like_pat),
+                )
+                row = cur.fetchone()
+                if row:
+                    d = dict(row)
+                    files = self._fetch_files_sqlite(conn, d["id"])
+                    return _row_to_standard(d, files)
+        return None
+
+    def ngram_fulltext_available(self) -> bool:
+        """检测 std_base 上是否存在 ngram 全文索引（scripts/ngram_fulltext.sql 创建）。
+
+        仅 MySQL 后端有意义；结果缓存避免每次检索都查 information_schema。
+        """
+        if not self._mysql_available():
+            return False
+        if getattr(self, "_ngram_checked", None) is None:
+            try:
+                with self._mysql() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT 1 FROM information_schema.STATISTICS "
+                        "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'std_base' "
+                        "AND INDEX_NAME = 'idx_ft_chinesename' LIMIT 1",
+                        (MYSQL_DATABASE,),
+                    )
+                    self._ngram_checked = bool(cur.fetchone())
+            except Exception:
+                self._ngram_checked = False
+        return bool(self._ngram_checked)
 
     def _fetch_files_mysql(self, cur, base_id: int) -> list[dict]:
         cur.execute(
@@ -940,6 +1013,10 @@ class Database:
         verify_disk: bool = False,
         count_key: str | None = None,
     ) -> dict:
+        if SEARCH_USE_NGRAM and self.ngram_fulltext_available():
+            return self._search_page_mysql_ngram(
+                q, page, per_page, offset, pdf_only, std_folder, verify_disk, count_key=count_key
+            )
         clause, clause_args = build_keyword_match_clause(q, param="%s", use_std_id_norm=True)
         order_sql, order_args = mysql_keyword_match_order_by(q)
         where_parts = [clause]
@@ -982,6 +1059,63 @@ class Database:
             "total_pages": total_pages,
             "items": items,
             "search_mode": "text",
+            "pdf_only": pdf_only,
+        }
+
+    def _search_page_mysql_ngram(
+        self,
+        q: str,
+        page: int,
+        per_page: int,
+        offset: int,
+        pdf_only: bool,
+        std_folder: str | None,
+        verify_disk: bool = False,
+        count_key: str | None = None,
+    ) -> dict:
+        """ngram 全文索引检索路径（仅当 SEARCH_USE_NGRAM=1 且索引存在时由 _search_page_mysql 调用）。"""
+        clause, clause_args = build_ngram_match_clause(q, param="%s")
+        order_sql, order_args = mysql_ngram_order_by(q)
+        where_parts = [clause]
+        args: list = list(clause_args)
+        if pdf_only:
+            where_parts.append(pdf_only_exists_sql(mysql=True))
+        folder_sql, folder_args = self._folder_exists_sql(std_folder)
+        if folder_sql:
+            folder_sql = folder_sql.replace("?", "%s")
+        where = " AND ".join(where_parts) + folder_sql
+        args.extend(folder_args)
+        opt_hint = "/*+ SET_VAR(optimizer_switch='semijoin=off') */ " if pdf_only else ""
+        total = self._cache_manager.get_cached_count(count_key) if count_key else None
+        with self._mysql() as conn:
+            cur = conn.cursor()
+            if total is None:
+                cur.execute(
+                    f"SELECT {opt_hint}COUNT(DISTINCT b.id) AS c FROM std_base b WHERE {where}",
+                    args,
+                )
+                total = int(cur.fetchone()["c"])
+                if count_key:
+                    self._cache_manager.set_cached_count(count_key, total)
+            cur.execute(
+                f"""
+                SELECT {opt_hint}DISTINCT b.* FROM std_base b
+                WHERE {where}
+                ORDER BY {order_sql}
+                LIMIT %s OFFSET %s
+                """,
+                (*args, *order_args, per_page, offset),
+            )
+            rows = list(cur.fetchall())
+            items = self._lite_items_mysql(cur, rows, verify_disk=verify_disk)
+        total_pages = (total + per_page - 1) // per_page if total else 0
+        return {
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+            "items": items,
+            "search_mode": "text_ngram",
             "pdf_only": pdf_only,
         }
 

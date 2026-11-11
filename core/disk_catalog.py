@@ -135,6 +135,20 @@ class DiskCatalog:
         except sqlite3.Error:
             return 0
 
+    def has_status_column(self) -> bool:
+        """索引是否含有 ex_state 状态列（决定能否按现行/废止筛选）。"""
+        if not self.db_path.is_file():
+            return False
+        try:
+            conn = sqlite3.connect(self.db_path)
+            try:
+                cols = {r[1] for r in conn.execute(f"PRAGMA table_info({self.table})")}
+                return "ex_state" in cols
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return False
+
     def describe(self) -> str:
         if not self.dir_exists():
             return f"{self.name}（目录不存在）"
@@ -162,7 +176,8 @@ class DiskCatalog:
                 file_ext TEXT NOT NULL,
                 file_size INTEGER,
                 mtime REAL NOT NULL,
-                rel_path TEXT NOT NULL UNIQUE
+                rel_path TEXT NOT NULL UNIQUE,
+                ex_state INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_{self.table}_cat ON {self.table}(category);
             CREATE VIRTUAL TABLE IF NOT EXISTS {self.fts_table} USING fts5(
@@ -207,8 +222,8 @@ class DiskCatalog:
 
         insert_sql = f"""
         INSERT OR REPLACE INTO {self.table} (
-            filename, category, title, file_ext, file_size, mtime, rel_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            filename, category, title, file_ext, file_size, mtime, rel_path, ex_state
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """
         count = 0
         batch = []
@@ -232,6 +247,12 @@ class DiskCatalog:
                 file_size = None
                 mtime = time.time()
 
+            raw_state = row.get("ex_state")
+            try:
+                ex_state = int(raw_state) if raw_state not in (None, "") else None
+            except (TypeError, ValueError):
+                ex_state = None
+
             batch.append(
                 (
                     row["filename"],
@@ -241,6 +262,7 @@ class DiskCatalog:
                     file_size,
                     mtime,
                     row["rel_path"],
+                    ex_state,
                 )
             )
             if len(batch) >= 2000:
@@ -273,13 +295,16 @@ class DiskCatalog:
     def _row_to_item(self, row: sqlite3.Row) -> dict:
         ext = (row["file_ext"] or "").lower()
         label = "PDF" if ext == ".pdf" else "DOC" if ext in (".doc", ".docx") else ext.upper().lstrip(".") or "文件"
+        ex_state = row["ex_state"] if "ex_state" in row.keys() else None
+        ex_label = {0: "废止", 1: "现行", 2: "即将实施"}.get(ex_state, label)
         return {
             "id": row["id"],
             "std_id": row["category"] or "—",
             "std_chinesename": row["title"] or row["filename"],
             "std_type": self.name,
             "std_status": label,
-            "ex_state_label": label,
+            "ex_state": ex_state,
+            "ex_state_label": ex_label,
             "has_pdf": ext == ".pdf",
             "has_file": True,
             "files": [
@@ -295,37 +320,42 @@ class DiskCatalog:
             ],
         }
 
-    def _search_where(self, q: str) -> tuple[str, list]:
+    def _search_where(self, q: str, *, ex_state: int | None = None) -> tuple[str, list]:
         q = (q or "").strip()
         if not q:
-            return "1=1", []
+            base = "1=1"
+        else:
+            base = None
 
         keywords = extract_core_keywords(q)
         fts_q = build_fts_query(q)
 
         if fts_q:
-            return (
-                f"id IN (SELECT rowid FROM {self.fts_table} WHERE {self.fts_table} MATCH ?)",
-                [fts_q],
+            base = (
+                f"id IN (SELECT rowid FROM {self.fts_table} WHERE {self.fts_table} MATCH ?)"
             )
-
-        if keywords:
+            args = [fts_q]
+        elif keywords:
             conds = []
             args = []
             for kw in keywords:
                 like = f"%{kw}%"
                 conds.append("(category LIKE ? OR title LIKE ? OR filename LIKE ?)")
                 args.extend([like, like, like])
-            return " AND ".join(conds), args
+            base = " AND ".join(conds)
+            args = args
+        else:
+            clean_q = clean_query_text(q) or q
+            like = f"%{clean_q}%"
+            base = "(category LIKE ? OR title LIKE ? OR filename LIKE ?)"
+            args = [like, like, like]
 
-        clean_q = clean_query_text(q) or q
-        like = f"%{clean_q}%"
-        return (
-            "(category LIKE ? OR title LIKE ? OR filename LIKE ?)",
-            [like, like, like],
-        )
+        if ex_state is not None and self.has_status_column():
+            base = f"({base}) AND ex_state = ?"
+            args = list(args) + [ex_state]
+        return base, args
 
-    def search_page(self, q: str, *, page: int = 1, per_page: int = 10) -> dict:
+    def search_page(self, q: str, *, page: int = 1, per_page: int = 10, ex_state: int | None = None) -> dict:
         page = max(1, page)
         per_page = min(max(per_page, 1), 50)
         offset = (page - 1) * per_page
@@ -340,7 +370,7 @@ class DiskCatalog:
                 "catalog_ready": False,
             }
 
-        where_sql, args = self._search_where(q)
+        where_sql, args = self._search_where(q, ex_state=ex_state)
         with self._connect() as conn:
             total = int(
                 conn.execute(

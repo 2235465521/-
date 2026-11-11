@@ -404,6 +404,19 @@ def resolve_item(
         disk = discover_pdfs_on_disk(std.std_id, limit=1)
         if disk:
             pdf_path = disk[0]
+    # 「部分下载旧版」兜底：请求版本无 PDF 时，回退到同号最新版本（优先现行）。
+    if not pdf_path and state_policy != "current_only":
+        latest = db.resolve_latest_version(std.std_id)
+        if latest and latest.id != std.id:
+            files2 = collect_files_for_standard(latest, scan_disk=scan_disk)
+            pdf2 = pick_pdf_path(latest, files2, scan_disk=scan_disk)
+            if not pdf2 and scan_disk:
+                disk2 = discover_pdfs_on_disk(latest.std_id, limit=1)
+                pdf2 = disk2[0] if disk2 else None
+            if pdf2:
+                std = latest
+                pdf_path = pdf2
+                state_note = (state_note + "；" if state_note else "") + f"原版本无PDF，已取最新版本 {latest.std_id}"
     if not pdf_path:
         return {
             "status": "no_pdf",
