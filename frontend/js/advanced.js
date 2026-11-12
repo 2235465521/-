@@ -208,8 +208,10 @@
       og.label = g.category || g.code || "其他";
       g.types.forEach(t => {
         const opt = document.createElement("option");
-        opt.value = t;
-        opt.textContent = t;
+        const v = (t && t.value != null) ? String(t.value) : String(t);
+        const lbl = (t && t.label != null) ? String(t.label) : v;
+        opt.value = v;
+        opt.textContent = lbl;
         og.appendChild(opt);
       });
       select.appendChild(og);

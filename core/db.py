@@ -629,17 +629,25 @@ class Database:
         return out
 
     def list_std_types_grouped(self) -> list[dict]:
-        """按大类(国家/行业/地方/团体/ISO/IEC)归并 std_type 代号，供前端分组下拉。
+        """按大类归并 std_type 代号，供前端分组下拉。
 
-        返回 [{"code": "00", "category": "国家标准", "types": ["GB/T", "国标", ...]}, ...]
-        顺序与 STD_TYPE_NO_CATEGORY 一致；空 std_type_no 归入「其他」。
+        返回顺序：国家标准 → 行业标准 → 地方标准 → 团体标准 → 国际标准(ISO/IEC)。
+        每组 types 为 [{"value": 代号, "label": "代号 中文名"}, ...]，option.value
+        仍用原始代号，保证后端按 std_type 精确过滤不受影响。
+
+        分组依据 std_base.std_type_no：
+            00 国家标准 / 01 行业标准 / 02 地方标准 /
+            03 团体标准 / 04 ISO / 05 IEC（04+05 合并为「国际标准」）。
         """
-        from core.std_type_map import STD_TYPE_NO_CATEGORY, STD_TYPE_UNKNOWN
+        from core.std_type_labels import (
+            national_label,
+            local_label,
+            industry_label,
+            iso_label,
+            group_label,
+        )
 
-        buckets: dict[str, list[str]] = {k: [] for k in STD_TYPE_NO_CATEGORY}
-        buckets[STD_TYPE_UNKNOWN] = []
-        order = list(STD_TYPE_NO_CATEGORY.keys()) + [STD_TYPE_UNKNOWN]
-
+        buckets: dict[str, list[str]] = {}
         sql = """
             SELECT std_type_no, std_type, COUNT(*) AS n
             FROM std_base
@@ -667,22 +675,43 @@ class Database:
             t = (row.get("std_type") or "").strip()
             if not t:
                 continue
-            if no in buckets:
-                if t not in buckets[no]:
-                    buckets[no].append(t)
-            else:
-                if t not in buckets[STD_TYPE_UNKNOWN]:
-                    buckets[STD_TYPE_UNKNOWN].append(t)
+            buckets.setdefault(no, [])
+            if t not in buckets[no]:
+                buckets[no].append(t)
 
-        return [
-            {
-                "code": no,
-                "category": STD_TYPE_NO_CATEGORY.get(no, no),
-                "types": buckets[no],
-            }
-            for no in order
-            if buckets.get(no)
+        # 数据纠错：DB 系列本属地方标准，个别被源数据错分到行业标准(no=01)
+        for t in list(buckets.get("01", [])):
+            if t.upper().startswith("DB"):
+                buckets.setdefault("02", [])
+                if t not in buckets["02"]:
+                    buckets["02"].append(t)
+                buckets["01"].remove(t)
+
+        # 最终分组定义（顺序即展示顺序）
+        groups_def = [
+            ("00", "国家标准", national_label),
+            ("01", "行业标准", industry_label),
+            ("02", "地方标准", local_label),
+            ("03", "团体标准", group_label),
+            ("INTL", "国际标准", iso_label),  # 合并 04 ISO + 05 IEC
         ]
+
+        result: list[dict] = []
+        for code, name, label_fn in groups_def:
+            if code == "INTL":
+                types = buckets.get("04", []) + buckets.get("05", [])
+            else:
+                types = buckets.get(code, [])
+            if not types:
+                continue
+            result.append(
+                {
+                    "code": code,
+                    "category": name,
+                    "types": [{"value": t, "label": label_fn(t)} for t in types],
+                }
+            )
+        return result
 
     def search_page(
         self,
